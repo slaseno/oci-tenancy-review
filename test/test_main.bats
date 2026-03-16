@@ -175,8 +175,8 @@ teardown() {
   run "$SCRIPT_PATH" policies
   [ "$status" -eq 0 ]
 
-  [ -f report/policy_statements.csv ]
-  run cat report/policy_statements.csv
+  [ -f report/policies/policy_statements.csv ]
+  run cat report/policies/policy_statements.csv
   [ "$status" -eq 0 ]
   [[ "$output" == *"compartment-id,compartment-name,policy-name"* ]]
   [[ "$output" == *"ocid1.compartment.oc1..child"* ]]
@@ -190,8 +190,8 @@ teardown() {
   run "$SCRIPT_PATH" compute
   [ "$status" -eq 0 ]
 
-  [ -f report/inventory/compute_instances.csv ]
-  run cat report/inventory/compute_instances.csv
+  [ -f report/compute/compute_instances.csv ]
+  run cat report/compute/compute_instances.csv
   [ "$status" -eq 0 ]
   [[ "$output" == *"instance-name,shape,ocpus,memory-in-gbs"* ]]
   [[ "$output" == *"app-01"* ]]

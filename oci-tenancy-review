@@ -11,8 +11,8 @@ Version: ${VERSION}
 
 Commands:
   compartments   Build tenancy compartment map at report/compartment_ids.txt
-  policies       Export tenancy policy statements to report/policy_statements.csv
-  compute        Export compute inventory to report/inventory/compute_instances.csv
+  policies       Export tenancy policy statements to report/policies/policy_statements.csv
+  compute        Export compute inventory to report/compute/compute_instances.csv
   all            Run compartments + policies + compute
   help           Show this help
 
@@ -38,7 +38,7 @@ require_cmd() {
 }
 
 init_report_dirs() {
-  mkdir -p report report/inventory
+  mkdir -p report report/compute report/policies
 }
 
 require_tenancy() {
@@ -83,8 +83,10 @@ find_target_compartments_by_resource_query() {
   local query_text="$1"
   local out_file="$2"
   local page=""
-  local resp_file="report/.search_response.json"
-  local extracted_file="report/.search_compartments.tmp"
+  local tmp_dir
+  tmp_dir="$(dirname "$out_file")"
+  local resp_file="${tmp_dir}/.search_response.json"
+  local extracted_file="${tmp_dir}/.search_compartments.tmp"
   local ids_file="${out_file}.ids"
 
   > "$ids_file"
@@ -152,9 +154,9 @@ build_policies() {
 
   find_target_compartments_by_resource_query \
     "query policy resources" \
-    "report/policy_target_compartments.csv"
+    "report/policies/policy_target_compartments.csv"
 
-  > report/policies_all_compartments.jsonl
+  > report/policies/policies_all_compartments.jsonl
   while IFS=',' read -r cid _; do
     [[ "$cid" == "compartment-id" ]] && continue
     [[ -n "$cid" ]] || continue
@@ -170,17 +172,17 @@ build_policies() {
             definedTags: ."defined-tags",
             statements: .statements
           }
-        ' >> report/policies_all_compartments.jsonl
-  done < report/policy_target_compartments.csv
+        ' >> report/policies/policies_all_compartments.jsonl
+  done < report/policies/policy_target_compartments.csv
 
-  jq -s '.' report/policies_all_compartments.jsonl > report/policies_all_compartments.json
+  jq -s '.' report/policies/policies_all_compartments.jsonl > report/policies/policies_all_compartments.json
 
   jq -r '
     ["compartment-id","compartment-name","policy-name","created-by","time-created","the actual statement","id"],
     (.[] as $p | ($p.statements // [])[] |
       [$p.compartmentId, $p.compartmentPath, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
     ) | @csv
-  ' report/policies_all_compartments.json > report/policy_statements.csv
+  ' report/policies/policies_all_compartments.json > report/policies/policy_statements.csv
 }
 
 build_compute() {
@@ -190,9 +192,9 @@ build_compute() {
 
   find_target_compartments_by_resource_query \
     "query instance resources" \
-    "report/inventory/compute_target_compartments.csv"
+    "report/compute/compute_target_compartments.csv"
 
-  > report/inventory/compute_instances.jsonl
+  > report/compute/compute_instances.jsonl
   while IFS=',' read -r cid _; do
     [[ "$cid" == "compartment-id" ]] && continue
     [[ -n "$cid" ]] || continue
@@ -231,20 +233,20 @@ build_compute() {
             definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
             timeCreated: ."time-created"
           }
-        ' >> report/inventory/compute_instances.jsonl
-  done < report/inventory/compute_target_compartments.csv
+        ' >> report/compute/compute_instances.jsonl
+  done < report/compute/compute_target_compartments.csv
 
-  jq -s '.' report/inventory/compute_instances.jsonl > report/inventory/compute_instances.json
+  jq -s '.' report/compute/compute_instances.jsonl > report/compute/compute_instances.json
 
   jq -r '
     ["compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","source-type","capacity-reservation-id","dedicated-vm-host-id","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
     (.[] | [.compartmentPath, .region, .instanceName, .shape, .ocpus, .memoryInGBs, .baselineOcpuUtilization, .lifecycleState, .availabilityDomain, .faultDomain, .imageId, .launchMode, .sourceType, .capacityReservationId, .dedicatedVmHostId, .preemptibleActionType, .availabilityRecoveryAction, .legacyImdsEndpointsDisabled, .networkType, .consistentVolumeNamingEnabled, .monitoringDisabled, .managementDisabled, .liveMigrationPreferred, .pvEncryptionInTransitEnabled, .metadataKeyCount, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .instanceId]) | @csv
-  ' report/inventory/compute_instances.json > report/inventory/compute_instances.csv
+  ' report/compute/compute_instances.json > report/compute/compute_instances.csv
 
   jq -r '
     ["shape","count"],
     (group_by(.shape) | map([.[0].shape, (length|tostring)]) | sort_by(.[1] | tonumber) | reverse | .[]) | @csv
-  ' report/inventory/compute_instances.json > report/inventory/compute_shapes_summary.csv
+  ' report/compute/compute_instances.json > report/compute/compute_shapes_summary.csv
 }
 
 main() {

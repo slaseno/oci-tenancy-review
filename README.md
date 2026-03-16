@@ -53,17 +53,17 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ## Usage
 
 ```bash
+# Run all steps (compartments + policies + compute)
+./oci-tenancy-review all
+
 # Build report/compartment_ids.txt (OCID<TAB>path)
 ./oci-tenancy-review compartments
 
-# Build report/policy_statements.csv
+# Build report/policies/policy_statements.csv
 ./oci-tenancy-review policies
 
-# Build compute inventory CSVs
+# Build compute inventory CSVs at report/compute/
 ./oci-tenancy-review compute
-
-# Run all steps (compartments + policies + compute)
-./oci-tenancy-review all
 ```
 
 Notes:
