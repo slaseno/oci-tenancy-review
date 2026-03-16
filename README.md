@@ -74,7 +74,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 tar -czvf report.tar.gz report
 ```
 
-If you used OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm) to execute the above, you should now be able to download the archived report by Navigating to Download (top right) and targeting this file:
+If you used OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm) to execute the above, you should now be able to download the archived report by navigating to "Cog -> Download" (top right) and targeting this file:
 ```
 oci-tenancy-review/report.tar.gz
 ```
