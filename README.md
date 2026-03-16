@@ -17,10 +17,13 @@ cd oci-tenancy-review
 chmod +x ./oci-tenancy-review
 ```
 
-Set tenancy OCID (required):
+### Set tenancy OCID (required)
+
+#### Option 1: Cloud Shell
+
+Use tenancy OCID from current OCI CLI context by default
 
 ```bash
-# Option 1 (in Cloud Shell): Use tenancy OCID from current OCI CLI context by default
 export TENANCY_OCID="${TENANCY_OCID:-$(
   oci iam compartment list \
     --include-root \
@@ -30,8 +33,14 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
     --query 'data[?starts_with(id, `ocid1.tenancy.`)].id | [0]' \
     --raw-output
 )}"
+echo "Your tenancy ocid is: '${TENANCY_OCID}'"
+```
 
-# Option 2 (configured local env): read tenancy OCID from ~/.oci/config (uses OCI_CLI_PROFILE or DEFAULT)
+#### Option 2: Local ENV
+
+Read tenancy OCID from ~/.oci/config (uses OCI_CLI_PROFILE or DEFAULT)
+
+```bash
 OCI_PROFILE="${OCI_CLI_PROFILE:-DEFAULT}"
 export TENANCY_OCID="${TENANCY_OCID:-$(
   awk -v profile="$OCI_PROFILE" '
@@ -42,8 +51,12 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
     }
   ' ~/.oci/config
 )}"
+echo "Your tenancy ocid is: '${TENANCY_OCID}'"
+```
 
-# Option 3: Set manually
+#### Option 3: Set manually
+
+```bash
 # cat ~/.oci/config
 export TENANCY_OCID="ocid1.tenancy.oc1...."
 echo "Your tenancy ocid is: '${TENANCY_OCID}'"
