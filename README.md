@@ -52,8 +52,15 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ## Usage
 
 ```bash
-# Run all steps (compartments + policies + compute)
+# Run all reports
 ./oci-tenancy-review all
+
+# Your reports are now available in the report subfolder
+# If you are within a OCI cloud shell, you may want to archive this folder to easily download it
+tar -czvf report.tar.gz report
+
+# ---
+# To run a specific reporter, use the following:
 
 # Build report/compartment_ids.txt (OCID<TAB>path)
 ./oci-tenancy-review compartments
@@ -67,7 +74,6 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 
 Notes:
 - All outputs are written relative to current working directory under `report/`.
-- `policies` and `compute` auto-generate compartment mapping if missing.
 - Run `./oci-tenancy-review help` for command help.
 
 ## Tests
