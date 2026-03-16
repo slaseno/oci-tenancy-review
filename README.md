@@ -1,6 +1,7 @@
 # OCI Tenancy Review
 
-This repository provides a single shell script to generate tenancy review artifacts under `report/`.
+This repository provides a single shell script to generate OCI tenancy review artifacts under `report/`.
+This script is compatible with [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm).
 
 ## Requirements
 
@@ -73,6 +74,10 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 tar -czvf report.tar.gz report
 ```
 
+If you used Cloud Shell to execute the above, you should now be able to download the archived report by using: Cog -> Download and targeting this file:
+```
+oci-tenancy-review/report.tar.gz
+```
 
 To run a specific reporter, use the following:
 ```bash
