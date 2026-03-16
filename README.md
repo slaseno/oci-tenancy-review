@@ -12,8 +12,8 @@ This repository provides a single shell script to generate tenancy review artifa
 ## Setup
 
 ```bash
-git clone <this-repo>
-cd ace_review
+git clone https://github.com/majodev/oci-tenancy-review.git
+cd oci-tenancy-review
 chmod +x ./oci-tenancy-review
 ```
 
@@ -45,8 +45,7 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
 
 # Option 3: Set manually
 # cat ~/.oci/config
-# export TENANCY_OCID="ocid1.tenancy.oc1...."
-
+export TENANCY_OCID="ocid1.tenancy.oc1...."
 echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ```
 
