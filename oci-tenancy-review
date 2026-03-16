@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -Eeuxo pipefail
+set -Eeuo pipefail
 
 VERSION="0.1.0"
 
@@ -37,6 +37,11 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || err "Missing required command: $1"
 }
 
+oci_call() {
+  echo "+ oci $*" >&2
+  oci "$@"
+}
+
 init_report_dirs() {
   mkdir -p report report/compute report/policies
 }
@@ -49,7 +54,7 @@ build_compartments() {
   init_report_dirs
   require_tenancy
 
-  oci iam compartment list \
+  oci_call iam compartment list \
     --compartment-id "$TENANCY_OCID" \
     --compartment-id-in-subtree true \
     --access-level ANY \
@@ -73,6 +78,9 @@ build_compartments() {
     | [.id, .path]
     | @tsv
   ' report/compartments.json > report/compartment_ids.txt
+
+  total_compartments="$(wc -l < report/compartment_ids.txt | tr -d ' ')"
+  echo "[INFO] build_compartments: ${total_compartments} total compartments." >&2
 }
 
 ensure_compartments() {
@@ -83,6 +91,7 @@ find_target_compartments_by_resource_query() {
   local query_text="$1"
   local out_file="$2"
   local page=""
+  local resource_count=0
   local tmp_dir
   tmp_dir="$(dirname "$out_file")"
   local resp_file="${tmp_dir}/.search_response.json"
@@ -92,13 +101,13 @@ find_target_compartments_by_resource_query() {
   > "$ids_file"
   while true; do
     if [[ -n "$page" ]]; then
-      oci search resource structured-search \
+      oci_call search resource structured-search \
         --query-text "$query_text" \
         --limit 1000 \
         --page "$page" \
         --output json > "$resp_file"
     else
-      oci search resource structured-search \
+      oci_call search resource structured-search \
         --query-text "$query_text" \
         --limit 1000 \
         --output json > "$resp_file"
@@ -120,6 +129,7 @@ find_target_compartments_by_resource_query() {
       | (."compartment-id" // .compartmentId // .compartment_id // empty)
     ' "$resp_file" > "$extracted_file"
 
+    resource_count=$((resource_count + $(wc -l < "$extracted_file")))
     cat "$extracted_file" >> "$ids_file"
 
     page="$(jq -r '."opc-next-page" // empty' "$resp_file")"
@@ -144,6 +154,10 @@ find_target_compartments_by_resource_query() {
     done < "$ids_file"
   } > "$out_file"
 
+  local target_compartments
+  target_compartments="$(tail -n +2 "$out_file" | wc -l | tr -d ' ')"
+  echo "[INFO] find_target_compartments_by_resource_query: '${query_text}' returned ${resource_count} resources in ${target_compartments} compartments." >&2
+
   rm -f "$ids_file"
 }
 
@@ -161,7 +175,7 @@ build_policies() {
     [[ "$cid" == "compartment-id" ]] && continue
     [[ -n "$cid" ]] || continue
     cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
-    oci iam policy list -c "$cid" --all --output json \
+    oci_call iam policy list -c "$cid" --all --output json \
       | jq -c --arg cid "$cid" --arg cpath "$cpath" '
           .data[]? | {
             compartmentId: $cid,
@@ -199,7 +213,7 @@ build_compute() {
     [[ "$cid" == "compartment-id" ]] && continue
     [[ -n "$cid" ]] || continue
     cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
-    oci compute instance list --compartment-id "$cid" --all --output json \
+    oci_call compute instance list --compartment-id "$cid" --all --output json \
       | jq -c --arg cid "$cid" --arg cpath "$cpath" '
           .data[]? | {
             compartmentId: $cid,
