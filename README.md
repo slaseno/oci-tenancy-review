@@ -44,5 +44,3 @@ reatedBy"] // ""), $p["time-created"], ., $p.id]) | @csv' policies_root.json > p
 
 > (findings, prioritized recommendations, quick wins vs. longer-term items)
 
-
-
