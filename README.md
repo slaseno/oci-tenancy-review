@@ -3,12 +3,9 @@
 This repository provides a single shell script to generate OCI tenancy review artifacts under `report/`.
 This script is compatible with OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm).
 
-## Requirements
+## Prerequisites
 
-- `bash`
-- `oci` CLI
-- `jq`
-- `awk`, `sort`
+If running in OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm) everything is already preconfigured for you. For local runs, ensure [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cliconcepts.htm) and [jq](https://github.com/jqlang/jq) is installed.
 
 ## Setup
 
@@ -19,6 +16,8 @@ chmod +x ./oci-tenancy-review
 ```
 
 ### Set tenancy OCID (required)
+
+You need administrative access to your tenancy, the tenancy you want to inspect must be supplied via the env var `TENANCY_OCID`.
 
 #### Option 1: OCI Cloud Shell
 
