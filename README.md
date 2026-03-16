@@ -73,9 +73,9 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 tar -czvf report.tar.gz report
 ```
 
-```bash
-# To run a specific reporter, use the following:
 
+To run a specific reporter, use the following:
+```bash
 # Build report/compartment_ids.txt (OCID<TAB>path)
 ./oci-tenancy-review compartments
 
