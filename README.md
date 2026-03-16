@@ -94,6 +94,82 @@ Notes:
 - All outputs are written relative to current working directory under `report/`.
 - Run `./oci-tenancy-review help` for command help.
 
+## Exported Files
+
+### `report/compartment_ids.txt`
+
+Tab-separated file (`OCID<TAB>path`) with one row per compartment:
+- `column 1`: compartment OCID
+- `column 2`: human-readable compartment path (`root` for tenancy root, child paths like `prod.apps.backend`)
+
+### `report/policies/policy_target_compartments.csv`
+
+CSV header:
+- `compartment-id`
+- `compartment-path`
+
+Contains the filtered compartment list used for policy collection.
+
+### `report/policies/policy_statements.csv`
+
+CSV header:
+- `compartment-id`
+- `compartment-name` (human-readable compartment path)
+- `policy-name`
+- `created-by` (from defined tag `Oracle-Tags.CreatedBy` when present)
+- `time-created`
+- `the actual statement` (one row per statement)
+- `id` (policy OCID)
+
+### `report/compute/compute_target_compartments.csv`
+
+CSV header:
+- `compartment-id`
+- `compartment-path`
+
+Contains the filtered compartment list used for compute instance collection.
+
+### `report/compute/compute_instances.csv`
+
+CSV header:
+- `compartment-path`
+- `region`
+- `instance-name`
+- `shape`
+- `ocpus`
+- `memory-in-gbs`
+- `baseline-ocpu-utilization`
+- `lifecycle-state`
+- `availability-domain`
+- `fault-domain`
+- `image-id`
+- `launch-mode`
+- `source-type`
+- `capacity-reservation-id`
+- `dedicated-vm-host-id`
+- `preemptible-action-type`
+- `availability-recovery-action`
+- `legacy-imds-endpoints-disabled`
+- `network-type`
+- `consistent-volume-naming-enabled`
+- `monitoring-disabled`
+- `management-disabled`
+- `live-migration-preferred`
+- `pv-encryption-in-transit-enabled`
+- `metadata-key-count`
+- `freeform-tag-count`
+- `defined-tag-namespace-count`
+- `time-created`
+- `instance-id`
+
+### `report/compute/compute_shapes_summary.csv`
+
+CSV header:
+- `shape`
+- `count`
+
+Shape distribution summary derived from `compute_instances.csv`.
+
 ## Tests
 
 Bats tests are under `test/test_main.bats`.
