@@ -5,6 +5,7 @@ This initiative should help our customers identify bottlenecks, gaps and future 
 - [OCI Tenancy Review](#oci-tenancy-review)
   - [Prerequisites](#prerequisites)
   - [1. Discovery + architecture walkthrough](#1-discovery--architecture-walkthrough)
+    - [Inventory: Compute Instances](#inventory-compute-instances)
   - [2. Availability \& resiliency assessment](#2-availability--resiliency-assessment)
   - [3. Architecture \& scalability review](#3-architecture--scalability-review)
     - [Policy Statements](#policy-statements)
@@ -24,6 +25,69 @@ Scope note:
 
 ## 1. Discovery + architecture walkthrough
 > (current-state goals, workloads, constraints) - through Zoom
+
+### Inventory: Compute Instances
+
+```bash
+# assumes TENANCY_OCID is already set (see policy section for discovery/fallback options)
+mkdir -p report/inventory
+
+# ------------------------------
+# Priority inventory: compute instances + exact shape (tenancy-wide)
+# ------------------------------
+# prerequisite: report/compartment_ids.txt from the policy section
+echo "" > report/inventory/compute_instances.jsonl
+while read -r cid; do
+  cpath="$(grep -m1 "^${cid}"$'\t' report/compartment_ids.txt | cut -f2-)"
+  echo "Getting instances in ${cid} ${cpath}..."
+  oci compute instance list --compartment-id "$cid" --all \
+    | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+      .data[] | {
+        compartmentId: $cid,
+        compartmentPath: $cpath,
+        region: .region,
+        instanceId: .id,
+        instanceName: ."display-name",
+        shape: .shape,
+        ocpus: ."shape-config".ocpus,
+        memoryInGBs: ."shape-config"."memory-in-gbs",
+        baselineOcpuUtilization: ."shape-config"."baseline-ocpu-utilization",
+        lifecycleState: ."lifecycle-state",
+        availabilityDomain: ."availability-domain",
+        faultDomain: ."fault-domain",
+        imageId: ."image-id",
+        launchMode: ."launch-mode",
+        sourceType: ."source-details"."source-type",
+        capacityReservationId: ."capacity-reservation-id",
+        dedicatedVmHostId: ."dedicated-vm-host-id",
+        preemptibleActionType: ."preemptible-instance-config"."preemption-action"."type",
+        availabilityRecoveryAction: ."availability-config"."recovery-action",
+        legacyImdsEndpointsDisabled: ."instance-options"."are-legacy-imds-endpoints-disabled",
+        networkType: ."launch-options"."network-type",
+        consistentVolumeNamingEnabled: ."launch-options"."is-consistent-volume-naming-enabled",
+        monitoringDisabled: ."agent-config"."is-monitoring-disabled",
+        managementDisabled: ."agent-config"."is-management-disabled",
+        liveMigrationPreferred: ."is-live-migration-preferred",
+        pvEncryptionInTransitEnabled: ."is-pv-encryption-in-transit-enabled",
+        metadataKeyCount: ((.metadata // {}) | keys | length),
+        freeformTagCount: ((."freeform-tags" // {}) | keys | length),
+        definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
+        timeCreated: ."time-created"
+      }' >> report/inventory/compute_instances.jsonl
+done < <(cut -f1 report/compartment_ids.txt)
+
+jq -s '.' report/inventory/compute_instances.jsonl > report/inventory/compute_instances.json
+
+jq -r '
+  ["compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","source-type","capacity-reservation-id","dedicated-vm-host-id","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
+  (.[] | [.compartmentPath, .region, .instanceName, .shape, .ocpus, .memoryInGBs, .baselineOcpuUtilization, .lifecycleState, .availabilityDomain, .faultDomain, .imageId, .launchMode, .sourceType, .capacityReservationId, .dedicatedVmHostId, .preemptibleActionType, .availabilityRecoveryAction, .legacyImdsEndpointsDisabled, .networkType, .consistentVolumeNamingEnabled, .monitoringDisabled, .managementDisabled, .liveMigrationPreferred, .pvEncryptionInTransitEnabled, .metadataKeyCount, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .instanceId]) | @csv
+' report/inventory/compute_instances.json > report/inventory/compute_instances.csv
+
+jq -r '
+  ["shape","count"],
+  (group_by(.shape) | map([.[0].shape, (length|tostring)]) | sort_by(.[1] | tonumber) | reverse | .[]) | @csv
+' report/inventory/compute_instances.json > report/inventory/compute_shapes_summary.csv
+```
 
 ## 2. Availability & resiliency assessment
 > (HA patterns, DR considerations, failure modes, backup/restore)
@@ -67,8 +131,7 @@ TENANCY_OCID="${TENANCY_OCID:-$(
 echo "Current tenancy ocid: ${TENANCY_OCID}"
 
 # output folder (relative to current working directory)
-rm -rf report
-mkdir report
+mkdir -p report
 
 # collect all compartments as: OCID<TAB>full.path (root + subtree)
 oci iam compartment list \
@@ -98,11 +161,11 @@ jq -r --arg tenancy "$TENANCY_OCID" '
 # pull policies per compartment into a single JSON file
 echo "" > report/policies_all_compartments.jsonl
 while read -r cid; do
-  cname="$(grep -m1 "^${cid}"$'\t' report/compartment_ids.txt | cut -f2-)"
-  echo "Getting policies in cid ${cid} ${cname}..."
+  cpath="$(grep -m1 "^${cid}"$'\t' report/compartment_ids.txt | cut -f2-)"
+  echo "Getting policies in ${cid} ${cpath}..."
   oci iam policy list -c "$cid" --all \
-    | jq -c --arg cid "$cid" --arg cname "$cname" \
-      '.data[] | {compartmentId:$cid, compartmentName:$cname, name:.name, id:.id, timeCreated:."time-created", definedTags:."defined-tags", statements:.statements}' \
+    | jq -c --arg cid "$cid" --arg cpath "$cpath" \
+      '.data[] | {compartmentId:$cid, compartmentPath:$cpath, name:.name, id:.id, timeCreated:."time-created", definedTags:."defined-tags", statements:.statements}' \
     >> report/policies_all_compartments.jsonl
 done < <(cut -f1 report/compartment_ids.txt)
 
@@ -112,7 +175,7 @@ jq -s '.' report/policies_all_compartments.jsonl > report/policies_all_compartme
 jq -r '
   ["compartment-id","compartment-name","policy-name","created-by","time-created","the actual statement","id"],
   (.[] as $p | ($p.statements // [])[] |
-    [$p.compartmentId, $p.compartmentName, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
+    [$p.compartmentId, $p.compartmentPath, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
   ) | @csv
 ' report/policies_all_compartments.json > report/policy_statements.csv
 ```
