@@ -13,8 +13,13 @@ This initiative should help our customers identify bottlenecks, gaps and future 
 
 ## Prerequisites
 
-* [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm)
+* [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm), tested with v3.76.0
 * [jq](https://github.com/jqlang/jq) (already installed in OCI cloud shell by default)
+
+Scope note:
+* `--compartment-id "$TENANCY_OCID"` targets the root compartment (tenancy) only.
+* To cover all subcompartments, use `--compartment-id-in-subtree true` when a command supports it.
+* If a command does not support subtree listing (for example `oci iam policy list`), iterate through all compartments.
 
 
 ## 1. Discovery + architecture walkthrough
@@ -28,19 +33,71 @@ This initiative should help our customers identify bottlenecks, gaps and future 
 
 ### Policy Statements
 
-To review all policy statements in an OCI compartment and format it as a CSV, use the following.
+To review all policy statements tenancy-wide and format them as CSV, use the following.
 This is especially useful to spot duplicate policies and ensure any leaf compartment is below 500 policy statements total.
 
 ```bash
-# get all policies of a specific compartment
-oci iam policy list -c COMPARTMENT_ID --all > policies_root.json
+# use tenancy OCID from current OCI CLI context by default (Cloud Shell friendly)
+TENANCY_OCID="${TENANCY_OCID:-$(
+  oci iam compartment list \
+    --include-root \
+    --compartment-id-in-subtree true \
+    --access-level ANY \
+    --all \
+    --query 'data[?starts_with(id, `ocid1.tenancy.`)].id | [0]' \
+    --raw-output
+)}"
+
+# fallback: read tenancy OCID from ~/.oci/config (uses OCI_CLI_PROFILE or DEFAULT)
+OCI_PROFILE="${OCI_CLI_PROFILE:-DEFAULT}"
+TENANCY_OCID="${TENANCY_OCID:-$(
+  awk -v profile="$OCI_PROFILE" '
+    $0=="[" profile "]" {in_profile=1; next}
+    /^\[/ {in_profile=0}
+    in_profile && $1 ~ /^tenancy[[:space:]]*=/ {
+      sub(/^[^=]*=[[:space:]]*/, "", $0); print $0; exit
+    }
+  ' ~/.oci/config
+)}"
+
+# optional manual override
+# cat ~/.oci/config
+# TENANCY_OCID="ocid1.tenancy.oc1...."
+
+echo "Current tenancy ocid: ${TENANCY_OCID}"
+
+# collect all compartments as: OCID<TAB>NAME (root + subtree)
+oci iam compartment list \
+  --compartment-id "$TENANCY_OCID" \
+  --compartment-id-in-subtree true \
+  --access-level ANY \
+  --include-root \
+  --all > compartments.json
+
+jq -r '.data[] | [.id, .name] | @tsv' compartments.json > compartment_ids.txt
+
+# pull policies per compartment into a single JSON file
+echo "" > policies_all_compartments.jsonl
+while read -r cid; do
+  cname="$(grep -m1 "^${cid}"$'\t' compartment_ids.txt | cut -f2-)"
+  echo "Getting policies in cid ${cid} ${cname}..."
+  oci iam policy list -c "$cid" --all \
+    | jq -c --arg cid "$cid" --arg cname "$cname" \
+      '.data[] | {compartmentId:$cid, compartmentName:$cname, name:.name, id:.id, timeCreated:."time-created", definedTags:."defined-tags", statements:.statements}' \
+    >> policies_all_compartments.jsonl
+done < <(cut -f1 compartment_ids.txt)
+
+jq -s '.' policies_all_compartments.jsonl > policies_all_compartments.json
 
 # to csv, flattened by policy statement
-jq -r '["policy-name","created-by","time-created","the actual statement","id"], (.data[] as $p | ($p.statements // [])[] | [$p.name, ($p["defined-tags"]["Oracle-Tags"]["C
-reatedBy"] // ""), $p["time-created"], ., $p.id]) | @csv' policies_root.json > policy_statements.csv
+jq -r '
+  ["compartment-id","compartment-name","policy-name","created-by","time-created","the actual statement","id"],
+  (.[] as $p | ($p.statements // [])[] |
+    [$p.compartmentId, $p.compartmentName, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
+  ) | @csv
+' policies_all_compartments.json > policy_statements.csv
 ```
 
 ## 4. Readout + actionable plan 
 
 > (findings, prioritized recommendations, quick wins vs. longer-term items)
-
