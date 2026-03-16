@@ -71,8 +71,9 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 # Your reports are now available in the report subfolder
 # If you are within a OCI cloud shell, you may want to archive this folder to easily download it
 tar -czvf report.tar.gz report
+```
 
-# ---
+```bash
 # To run a specific reporter, use the following:
 
 # Build report/compartment_ids.txt (OCID<TAB>path)
