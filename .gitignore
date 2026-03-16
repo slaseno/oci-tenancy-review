@@ -2,6 +2,7 @@
 .codex
 report
 recon
+reference
 
 oci-cli
 oci_cli_docs

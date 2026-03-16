@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+
+set -Eeuxo pipefail
+
+VERSION="0.1.0"
+
+usage() {
+  cat <<USAGE
+Usage: ./oci-tenancy-review <command>
+Version: ${VERSION}
+
+Commands:
+  compartments   Build tenancy compartment map at report/compartment_ids.txt
+  policies       Export tenancy policy statements to report/policy_statements.csv
+  compute        Export compute inventory to report/inventory/compute_instances.csv
+  help           Show this help
+
+Required environment:
+  TENANCY_OCID   Tenancy OCID (ocid1.tenancy...)
+
+Examples:
+  export TENANCY_OCID="ocid1.tenancy.oc1...."
+  ./oci-tenancy-review compartments
+  ./oci-tenancy-review policies
+  ./oci-tenancy-review compute
+USAGE
+}
+
+err() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || err "Missing required command: $1"
+}
+
+init_report_dirs() {
+  mkdir -p report report/inventory
+}
+
+require_tenancy() {
+  [[ -n "${TENANCY_OCID:-}" ]] || err "TENANCY_OCID is required"
+}
+
+build_compartments() {
+  init_report_dirs
+  require_tenancy
+
+  oci iam compartment list \
+    --compartment-id "$TENANCY_OCID" \
+    --compartment-id-in-subtree true \
+    --access-level ANY \
+    --include-root \
+    --all \
+    --output json > report/compartments.json
+
+  jq -r --arg tenancy "$TENANCY_OCID" '
+    .data as $d
+    | ($d | map({key: .id, value: .}) | from_entries) as $m
+    | def full_path($id):
+        if $id == $tenancy then
+          ""
+        else
+          (full_path($m[$id]."compartment-id")) as $p
+          | if $p == "" then $m[$id].name else ($p + "." + $m[$id].name) end
+        end;
+      [ $d[] | {id: .id, path: (if .id == $tenancy then "root" else full_path(.id) end)} ]
+    | sort_by(if .path == "root" then "" else .path end)
+    | .[]
+    | [.id, .path]
+    | @tsv
+  ' report/compartments.json > report/compartment_ids.txt
+}
+
+ensure_compartments() {
+  [[ -s report/compartment_ids.txt ]] || build_compartments
+}
+
+build_policies() {
+  init_report_dirs
+  require_tenancy
+  ensure_compartments
+
+  > report/policies_all_compartments.jsonl
+  while read -r cid; do
+    [[ -n "$cid" ]] || continue
+    cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
+    oci iam policy list -c "$cid" --all --output json \
+      | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+          .data[]? | {
+            compartmentId: $cid,
+            compartmentPath: $cpath,
+            name: .name,
+            id: .id,
+            timeCreated: ."time-created",
+            definedTags: ."defined-tags",
+            statements: .statements
+          }
+        ' >> report/policies_all_compartments.jsonl
+  done < <(cut -f1 report/compartment_ids.txt)
+
+  jq -s '.' report/policies_all_compartments.jsonl > report/policies_all_compartments.json
+
+  jq -r '
+    ["compartment-id","compartment-name","policy-name","created-by","time-created","the actual statement","id"],
+    (.[] as $p | ($p.statements // [])[] |
+      [$p.compartmentId, $p.compartmentPath, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
+    ) | @csv
+  ' report/policies_all_compartments.json > report/policy_statements.csv
+}
+
+build_compute() {
+  init_report_dirs
+  require_tenancy
+  ensure_compartments
+
+  > report/inventory/compute_instances.jsonl
+  while read -r cid; do
+    [[ -n "$cid" ]] || continue
+    cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
+    oci compute instance list --compartment-id "$cid" --all --output json \
+      | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+          .data[]? | {
+            compartmentId: $cid,
+            compartmentPath: $cpath,
+            region: .region,
+            instanceId: .id,
+            instanceName: ."display-name",
+            shape: .shape,
+            ocpus: ."shape-config".ocpus,
+            memoryInGBs: ."shape-config"."memory-in-gbs",
+            baselineOcpuUtilization: ."shape-config"."baseline-ocpu-utilization",
+            lifecycleState: ."lifecycle-state",
+            availabilityDomain: ."availability-domain",
+            faultDomain: ."fault-domain",
+            imageId: ."image-id",
+            launchMode: ."launch-mode",
+            sourceType: ."source-details"."source-type",
+            capacityReservationId: ."capacity-reservation-id",
+            dedicatedVmHostId: ."dedicated-vm-host-id",
+            preemptibleActionType: ."preemptible-instance-config"."preemption-action"."type",
+            availabilityRecoveryAction: ."availability-config"."recovery-action",
+            legacyImdsEndpointsDisabled: ."instance-options"."are-legacy-imds-endpoints-disabled",
+            networkType: ."launch-options"."network-type",
+            consistentVolumeNamingEnabled: ."launch-options"."is-consistent-volume-naming-enabled",
+            monitoringDisabled: ."agent-config"."is-monitoring-disabled",
+            managementDisabled: ."agent-config"."is-management-disabled",
+            liveMigrationPreferred: ."is-live-migration-preferred",
+            pvEncryptionInTransitEnabled: ."is-pv-encryption-in-transit-enabled",
+            metadataKeyCount: ((.metadata // {}) | keys | length),
+            freeformTagCount: ((."freeform-tags" // {}) | keys | length),
+            definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
+            timeCreated: ."time-created"
+          }
+        ' >> report/inventory/compute_instances.jsonl
+  done < <(cut -f1 report/compartment_ids.txt)
+
+  jq -s '.' report/inventory/compute_instances.jsonl > report/inventory/compute_instances.json
+
+  jq -r '
+    ["compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","source-type","capacity-reservation-id","dedicated-vm-host-id","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
+    (.[] | [.compartmentPath, .region, .instanceName, .shape, .ocpus, .memoryInGBs, .baselineOcpuUtilization, .lifecycleState, .availabilityDomain, .faultDomain, .imageId, .launchMode, .sourceType, .capacityReservationId, .dedicatedVmHostId, .preemptibleActionType, .availabilityRecoveryAction, .legacyImdsEndpointsDisabled, .networkType, .consistentVolumeNamingEnabled, .monitoringDisabled, .managementDisabled, .liveMigrationPreferred, .pvEncryptionInTransitEnabled, .metadataKeyCount, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .instanceId]) | @csv
+  ' report/inventory/compute_instances.json > report/inventory/compute_instances.csv
+
+  jq -r '
+    ["shape","count"],
+    (group_by(.shape) | map([.[0].shape, (length|tostring)]) | sort_by(.[1] | tonumber) | reverse | .[]) | @csv
+  ' report/inventory/compute_instances.json > report/inventory/compute_shapes_summary.csv
+}
+
+main() {
+  require_cmd oci
+  require_cmd jq
+  require_cmd awk
+  require_cmd sort
+
+  local cmd="${1:-help}"
+  case "$cmd" in
+    compartments)
+      build_compartments
+      ;;
+    policies)
+      build_policies
+      ;;
+    compute)
+      build_compute
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      err "Unknown command: $cmd"
+      ;;
+  esac
+}
+
+main "$@"
