@@ -110,7 +110,7 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 # Build report/regions.txt (subscribed OCI regions)
 ./oci-tenancy-review regions
 
-# Build report/compartment_ids.txt (OCID<TAB>path)
+# Build report/compartments.csv
 ./oci-tenancy-review compartments
 
 # Build compute inventory CSVs at report/compute/
@@ -133,11 +133,11 @@ Notes:
 
 Newline-separated OCI region names subscribed for the tenancy (for example `eu-frankfurt-1`).
 
-### `report/compartment_ids.txt`
+### `report/compartments.csv`
 
-Tab-separated file (`OCID<TAB>path`) with one row per compartment:
-- `column 1`: compartment OCID
-- `column 2`: human-readable compartment path (`root` for tenancy root, child paths like `prod.apps.backend`)
+CSV header:
+- `compartment-id`
+- `compartment-path`
 
 ### `report/policies/policy_target_compartments.csv`
 

@@ -18,7 +18,7 @@ Version: ${VERSION}
 
 Commands:
   regions        Export subscribed region names to report/regions.txt
-  compartments   Build tenancy compartment map at report/compartment_ids.txt
+  compartments   Build tenancy compartment map at report/compartments.csv
   policies       Export tenancy policy statements to report/policies/policy_statements.csv
   compute        Export compute inventory to report/compute/compute_instances.csv
   all            Run compartments + policies + compute
@@ -196,7 +196,9 @@ build_compartments() {
     --all \
     --output json > report/compartments.json
 
-  jq -r --arg tenancy "$TENANCY_OCID" '
+  {
+    echo "compartment-id,compartment-path"
+    jq -r --arg tenancy "$TENANCY_OCID" '
     .data as $d
     | ($d | map({key: .id, value: .}) | from_entries) as $m
     | def full_path($id):
@@ -209,18 +211,23 @@ build_compartments() {
       [ $d[] | {id: .id, path: (if .id == $tenancy then "root" else full_path(.id) end)} ]
     | sort_by(if .path == "root" then "" else .path end)
     | .[]
-    | [.id, .path]
-    | @tsv
-  ' report/compartments.json > report/compartment_ids.txt
+    | .id + "," + .path
+  ' report/compartments.json
+  } > report/compartments.csv
   verbose "wrote 'report/compartments.json'"
-  verbose "wrote 'report/compartment_ids.txt'"
+  verbose "wrote 'report/compartments.csv'"
 
-  total_compartments="$(wc -l < report/compartment_ids.txt | tr -d ' ')"
+  total_compartments="$(tail -n +2 report/compartments.csv | wc -l | tr -d ' ')"
   log "${total_compartments} total compartments."
 }
 
 ensure_compartments() {
-  [[ -s report/compartment_ids.txt ]] || build_compartments
+  [[ -s report/compartments.csv ]] || build_compartments
+}
+
+get_compartment_path() {
+  local cid="$1"
+  awk -F',' -v cid="$cid" 'NR>1 && $1==cid {sub(/^[^,]*,/, "", $0); print $0; exit}' report/compartments.csv
 }
 
 search() {
@@ -305,7 +312,7 @@ search() {
     echo "compartment-id,compartment-path"
     while read -r cid; do
       [[ -n "$cid" ]] || continue
-      cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
+      cpath="$(get_compartment_path "$cid")"
       printf '%s,%s\n' "$cid" "$cpath"
     done < "$ids_file"
   } > "$out_file"
@@ -335,7 +342,7 @@ build_policies() {
     [[ -n "$cid" ]] || continue
     progress_dot
     had_policy_iterations="true"
-    cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
+    cpath="$(get_compartment_path "$cid")"
     oci iam policy list -c "$cid" --all --output json \
       | jq -c --arg cid "$cid" --arg cpath "$cpath" '
           .data[]? | {
@@ -406,7 +413,7 @@ build_compute() {
       [[ -n "$cid" ]] || continue
       progress_dot
       had_compute_iterations="true"
-      cpath="$(awk -F'\t' -v cid="$cid" '$1==cid {print $2; exit}' report/compartment_ids.txt)"
+      cpath="$(get_compartment_path "$cid")"
       oci compute instance list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c --arg cid "$cid" --arg cpath "$cpath" '
             .data[]? | {

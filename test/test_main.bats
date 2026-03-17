@@ -179,17 +179,19 @@ teardown() {
   [[ "$output" == *"TENANCY_OCID is required"* ]]
 }
 
-@test "compartments command writes sorted compartment_ids.txt" {
+@test "compartments command writes sorted compartments.csv" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
 
   run "$SCRIPT_PATH" compartments
   [ "$status" -eq 0 ]
 
-  [ -f report/compartment_ids.txt ]
-  run cat report/compartment_ids.txt
+  [ -f report/compartments.csv ]
+  run cat report/compartments.csv
   [ "$status" -eq 0 ]
-  [[ "$output" == $'ocid1.tenancy.oc1..tenancy\troot\nocid1.compartment.oc1..child\tchild' ]]
+  [[ "$output" == *"compartment-id,compartment-path"* ]]
+  [[ "$output" == *"ocid1.tenancy.oc1..tenancy,root"* ]]
+  [[ "$output" == *"ocid1.compartment.oc1..child,child"* ]]
 }
 
 @test "regions command writes report/regions.txt" {
