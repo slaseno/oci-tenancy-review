@@ -228,9 +228,6 @@ CSV header:
 - `used`
 - `available`
 - `usage-percent`
-- `is-negative-availability`
-- `is-near-80pct`
-- `is-compute-service`
 
 Rows are ordered by risk priority (negative availability first, then near/over-threshold, with compute emphasized).
 This report currently focuses on compute service limits.

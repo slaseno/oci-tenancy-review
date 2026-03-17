@@ -199,6 +199,7 @@ resolve_target_regions() {
   fi
 
   [[ "${#regions[@]}" -gt 0 ]] || fatal "No reachable regions from requested region set"
+  log "regions to inspect: $(printf '%s ' "${regions[@]}" | sed 's/[[:space:]]*$//')"
   printf '%s\n' "${regions[@]}"
 }
 
@@ -551,10 +552,7 @@ build_limits() {
         "limit-value",
         "used",
         "available",
-        "usage-percent",
-        "is-negative-availability",
-        "is-near-80pct",
-        "is-compute-service"
+        "usage-percent"
       ] | @csv
     ' > report/limits/service_limits.csv
     verbose "wrote 'report/limits/service_limits.json'"
@@ -706,7 +704,6 @@ build_limits() {
           isComputeService: $is_compute
         }
     )
-    | map(select((.used // 0) > 0 or .isNegativeAvailability or .isNear80Percent))
     | sort_by(.priorityRank, -( .usagePercent // -1 ), .region, .serviceName, .limitName)
   ' report/limits/limits_rows.jsonl > report/limits/service_limits.json
   verbose "wrote 'report/limits/service_limits.json'"
@@ -723,10 +720,7 @@ build_limits() {
       "limit-value",
       "used",
       "available",
-      "usage-percent",
-      "is-negative-availability",
-      "is-near-80pct",
-      "is-compute-service"
+      "usage-percent"
     ],
     (
       .[] |
@@ -741,10 +735,7 @@ build_limits() {
         .limitValue,
         .used,
         .available,
-        .usagePercent,
-        .isNegativeAvailability,
-        .isNear80Percent,
-        .isComputeService
+        .usagePercent
       ]
     ) | @csv
   ' report/limits/service_limits.json > report/limits/service_limits.csv
