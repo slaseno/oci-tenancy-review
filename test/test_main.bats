@@ -241,7 +241,7 @@ teardown() {
 
   run "$SCRIPT_PATH" compute
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[WARN] Skipping unreachable region: eu-mars-1"* ]]
+  [[ "$output" == *"Skipping unreachable region: eu-mars-1"* ]]
 }
 
 @test "verbose mode enables bash xtrace output" {

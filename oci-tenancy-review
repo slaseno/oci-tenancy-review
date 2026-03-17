@@ -4,6 +4,12 @@ set -Eeuo pipefail
 
 VERSION="0.1.0"
 VERBOSE="false"
+COLORS_ENABLED="${COLORS_ENABLED:=$( (command -v tput > /dev/null 2>&1 && [[ $(tput -T"${TERM:-dumb}" colors 2>/dev/null || echo 0) -ge 8 ]] && echo "true") || echo "false")}"
+COLOR_RED=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;31m" || printf "")
+COLOR_GREEN=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;32m" || printf "")
+COLOR_YELLOW=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;33m" || printf "")
+COLOR_GRAY=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;90m" || printf "")
+COLOR_END=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0m" || printf "")
 
 usage() {
   cat <<USAGE
@@ -37,15 +43,32 @@ Examples:
 USAGE
 }
 
+log() {
+  local msg="$1"
+  printf '%b[I] %s: %s%b\n' "$COLOR_GREEN" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+}
+
+verbose() {
+  local msg="$1"
+  printf '%b%s%b\n' "$COLOR_GRAY" "$msg" "$COLOR_END" >&2
+}
+
+warn() {
+  local msg="$1"
+  printf '%b[W] %s: %s%b\n' "$COLOR_YELLOW" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+}
+
 err() {
-  echo "Error: $*" >&2
+  local msg="$1"
+  printf '%b[E] %s: %s%b\n' "$COLOR_RED" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+}
+
+fatal() {
+  local msg="$1"
+  printf '%b[F] %s: %s%b\n' "$COLOR_RED" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
   exit 1
 }
 
-log_file_written() {
-  local file_path="$1"
-  echo "[INFO] Wrote file: ${file_path}" >&2
-}
 
 progress_dot() {
   [[ "$VERBOSE" == "true" ]] || printf '.' >&2
@@ -53,7 +76,7 @@ progress_dot() {
 
 progress_prefix() {
   local message="$1"
-  [[ "$VERBOSE" == "true" ]] || printf '[INFO] %s ' "$message" >&2
+  [[ "$VERBOSE" == "true" ]] || printf '%b[I] %s %b' "$COLOR_GREEN" "$message" "$COLOR_END" >&2
 }
 
 progress_newline() {
@@ -65,7 +88,7 @@ progress_newline() {
 }
 
 require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || err "Missing required command: $1"
+  command -v "$1" >/dev/null 2>&1 || fatal "Missing required command: $1"
 }
 
 
@@ -74,7 +97,7 @@ init_report_dirs() {
 }
 
 require_tenancy() {
-  [[ -n "${TENANCY_OCID:-}" ]] || err "TENANCY_OCID is required"
+  [[ -n "${TENANCY_OCID:-}" ]] || fatal "TENANCY_OCID is required"
 }
 
 get_review_regions() {
@@ -137,14 +160,14 @@ filter_reachable_regions() {
     [[ -n "$region" ]] || continue
     if is_blacklisted_region "$region"; then
       progress_newline
-      echo "[WARN] Skipping blacklisted region: $region" >&2
+      warn "Skipping blacklisted region: $region"
       continue
     fi
     if is_region_reachable "$region"; then
       echo "$region"
     else
       progress_newline
-      echo "[WARN] Skipping unreachable region: $region" >&2
+      warn "Skipping unreachable region: $region"
     fi
   done
   if [[ "$had_iterations" == "true" ]]; then
@@ -157,7 +180,7 @@ build_regions() {
   require_tenancy
 
   get_all_subscribed_regions | sort -u > report/regions.txt
-  log_file_written "report/regions.txt"
+  verbose "Wrote file: report/regions.txt"
   cat report/regions.txt
 }
 
@@ -189,11 +212,11 @@ build_compartments() {
     | [.id, .path]
     | @tsv
   ' report/compartments.json > report/compartment_ids.txt
-  log_file_written "report/compartments.json"
-  log_file_written "report/compartment_ids.txt"
+  verbose "Wrote file: report/compartments.json"
+  verbose "Wrote file: report/compartment_ids.txt"
 
   total_compartments="$(wc -l < report/compartment_ids.txt | tr -d ' ')"
-  echo "[INFO] build_compartments: ${total_compartments} total compartments." >&2
+  log "${total_compartments} total compartments."
 }
 
 ensure_compartments() {
@@ -251,7 +274,7 @@ search() {
       fi
 
       jq -e '.' "$resp_file" >/dev/null 2>&1 || \
-        err "Search query returned non-JSON output for: $query_text"
+        fatal "Search query returned non-JSON output for: $query_text"
 
       jq -r '
         if (.data | type) == "array" then
@@ -286,11 +309,11 @@ search() {
       printf '%s,%s\n' "$cid" "$cpath"
     done < "$ids_file"
   } > "$out_file"
-  log_file_written "$out_file"
+  verbose "Wrote file: $out_file"
 
   local target_compartments
   target_compartments="$(tail -n +2 "$out_file" | wc -l | tr -d ' ')"
-  echo "[INFO] search '${query_text}' returned ${resource_count} resources in ${target_compartments} compartments (regions=${regions})." >&2
+  log "search '${query_text}' returned ${resource_count} resources in ${target_compartments} compartments (regions=${regions})."
 
   rm -f "$ids_file"
 }
@@ -329,7 +352,7 @@ build_policies() {
   progress_newline
 
   jq -s '.' report/policies/policies_all_compartments.jsonl > report/policies/policies_all_compartments.json
-  log_file_written "report/policies/policies_all_compartments.json"
+  verbose "Wrote file: report/policies/policies_all_compartments.json"
 
   jq -r '
     ["compartment-id","compartment-name","policy-name","created-by","time-created","the actual statement","id"],
@@ -337,7 +360,7 @@ build_policies() {
       [$p.compartmentId, $p.compartmentPath, $p.name, ($p.definedTags["Oracle-Tags"]["CreatedBy"] // ""), $p.timeCreated, ., $p.id]
     ) | @csv
   ' report/policies/policies_all_compartments.json > report/policies/policy_statements.csv
-  log_file_written "report/policies/policy_statements.csv"
+  verbose "Wrote file: report/policies/policy_statements.csv"
 }
 
 build_compute() {
@@ -362,7 +385,7 @@ build_compute() {
     while IFS= read -r region; do
       [[ -n "$region" ]] && regions+=("$region")
     done < <(filter_reachable_regions "${requested_regions[@]}")
-    [[ "${#regions[@]}" -gt 0 ]] || err "No reachable regions from requested region set"
+    [[ "${#regions[@]}" -gt 0 ]] || fatal "No reachable regions from requested region set"
   fi
 
   > report/compute/compute_instances.jsonl
@@ -424,19 +447,19 @@ build_compute() {
   done
 
   jq -s '.' report/compute/compute_instances.jsonl > report/compute/compute_instances.json
-  log_file_written "report/compute/compute_instances.json"
+  verbose "Wrote file: report/compute/compute_instances.json"
 
   jq -r '
     ["compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","source-type","capacity-reservation-id","dedicated-vm-host-id","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
     (.[] | [.compartmentPath, .region, .instanceName, .shape, .ocpus, .memoryInGBs, .baselineOcpuUtilization, .lifecycleState, .availabilityDomain, .faultDomain, .imageId, .launchMode, .sourceType, .capacityReservationId, .dedicatedVmHostId, .preemptibleActionType, .availabilityRecoveryAction, .legacyImdsEndpointsDisabled, .networkType, .consistentVolumeNamingEnabled, .monitoringDisabled, .managementDisabled, .liveMigrationPreferred, .pvEncryptionInTransitEnabled, .metadataKeyCount, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .instanceId]) | @csv
   ' report/compute/compute_instances.json > report/compute/compute_instances.csv
-  log_file_written "report/compute/compute_instances.csv"
+  verbose "Wrote file: report/compute/compute_instances.csv"
 
   jq -r '
     ["shape","count"],
     (group_by(.shape) | map([.[0].shape, (length|tostring)]) | sort_by(.[1] | tonumber) | reverse | .[]) | @csv
   ' report/compute/compute_instances.json > report/compute/compute_shapes_summary.csv
-  log_file_written "report/compute/compute_shapes_summary.csv"
+  verbose "Wrote file: report/compute/compute_shapes_summary.csv"
 }
 
 main() {
@@ -451,14 +474,14 @@ main() {
         if [[ -z "$cmd" ]]; then
           cmd="help"
         else
-          err "Unknown option: $1"
+          fatal "Unknown option: $1"
         fi
         ;;
       *)
         if [[ -z "$cmd" ]]; then
           cmd="$1"
         else
-          err "Unknown option: $1"
+          fatal "Unknown option: $1"
         fi
         ;;
     esac
@@ -495,7 +518,7 @@ main() {
       usage
       ;;
     *)
-      err "Unknown command: $cmd"
+      fatal "Unknown command: $cmd"
       ;;
   esac
 }
