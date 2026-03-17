@@ -804,8 +804,8 @@ main() {
     all)
       build_compartments
       build_compute
-      build_policies
       build_limits
+      build_policies
       ;;
     help|-h|--help)
       usage
