@@ -433,6 +433,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"region,service-name,limit-name,scope-type"* ]]
   [[ "$output" == *"eu-frankfurt-1,compute"* ]]
+  [[ "$output" == *"eu-frankfurt-1,block-storage"* ]]
   [[ "$output" == *"compute"* ]]
 }
 

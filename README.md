@@ -121,7 +121,7 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 # Build block + boot volume inventory CSV at report/storage/
 ./oci-tenancy-review block-storage
 
-# Build compute limits posture CSV at report/limits/
+# Build compute + block-storage limits posture CSV at report/limits/
 ./oci-tenancy-review limits
 
 # Build report/policies/policy_statements.csv
@@ -268,7 +268,7 @@ CSV header:
 - `usage-percent`
 
 Rows are ordered by `usage-percent` descending, then region/service/limit.
-This report currently focuses on compute service limits.
+This report currently focuses on compute and block-storage service limits.
 
 ## Tests
 

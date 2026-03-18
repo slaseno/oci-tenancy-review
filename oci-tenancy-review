@@ -22,7 +22,7 @@ Commands:
   policies       Export tenancy policy statements to report/policies/policy_statements.csv
   compute        Export compute inventory to report/compute/compute_instances.csv
   block-storage        Export block + boot volume inventory to report/storage/storage_inventory.csv
-  limits         Export compute limits posture to report/limits/service_limits.csv
+  limits         Export compute + block-storage limits posture to report/limits/service_limits.csv
   all            Run compartments + policies + compute + block-storage + limits
   help           Show this help
 
@@ -529,16 +529,26 @@ ensure_compute_inventory() {
   [[ -s report/compute/compute_instances.json ]] || build_compute
 }
 
+ensure_storage_inventory() {
+  [[ -s report/storage/storage_inventory_enriched.json ]] || build_storage
+}
+
 build_limits() {
   init_report_dirs
   require_tenancy
   ensure_compute_inventory
+  ensure_storage_inventory
 
   local -a regions
   regions=()
   while IFS= read -r region; do
     [[ -n "$region" ]] && regions+=("$region")
-  done < <(jq -r '.[].region // empty' report/compute/compute_instances.json | sort -u)
+  done < <(
+    {
+      jq -r '.[].region // empty' report/compute/compute_instances.json
+      jq -r '.[] | select(.kind=="block-volume") | .region // empty' report/storage/storage_inventory_enriched.json
+    } | sort -u
+  )
 
   if [[ "${#regions[@]}" -eq 0 ]]; then
     echo "[]" > report/limits/service_limits.json
@@ -563,96 +573,104 @@ build_limits() {
   > report/limits/limits_rows.jsonl
   local region
   for region in "${regions[@]}"; do
-    local values_file
-    values_file="report/limits/.values_${region}.json"
-    local prefixes_file
-    prefixes_file="report/limits/.prefixes_${region}.txt"
-    build_region_limit_prefixes "$region" "$prefixes_file"
-    if [[ ! -s "$prefixes_file" ]]; then
+    local service_name
+    for service_name in compute block-storage; do
+      local values_file
+      values_file="report/limits/.values_${region}_${service_name}.json"
+      local prefixes_file
+      prefixes_file="report/limits/.prefixes_${region}.txt"
+
+      if [[ "$service_name" == "compute" ]]; then
+        build_region_limit_prefixes "$region" "$prefixes_file"
+        if [[ ! -s "$prefixes_file" ]]; then
+          rm -f "$values_file" "$prefixes_file"
+          continue
+        fi
+      fi
+
+      progress_prefix "build_limits ${region}/${service_name}"
+      local had_limit_iterations="false"
+
+      oci limits value list \
+        --compartment-id "$TENANCY_OCID" \
+        --service-name "$service_name" \
+        --all \
+        --region "$region" \
+        --output json > "$values_file"
+
+      while IFS=$'\t' read -r limit_name scope_type ad_name limit_value; do
+        [[ -n "$limit_name" ]] || continue
+        if [[ "$service_name" == "compute" ]]; then
+          if ! limit_matches_prefixes "$limit_name" "$prefixes_file"; then
+            continue
+          fi
+        fi
+        progress_dot
+        had_limit_iterations="true"
+
+        local ra_json
+        local used_val=""
+        local avail_val=""
+
+        if [[ "$scope_type" == "AD" && -n "$ad_name" && "$ad_name" != "null" ]]; then
+          if ra_json="$(oci limits resource-availability get \
+            --compartment-id "$TENANCY_OCID" \
+            --service-name "$service_name" \
+            --limit-name "$limit_name" \
+            --availability-domain "$ad_name" \
+            --region "$region" \
+            --output json 2>/dev/null)"; then
+            used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
+            avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
+          fi
+        else
+          if ra_json="$(oci limits resource-availability get \
+            --compartment-id "$TENANCY_OCID" \
+            --service-name "$service_name" \
+            --limit-name "$limit_name" \
+            --region "$region" \
+            --output json 2>/dev/null)"; then
+            used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
+            avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
+          fi
+        fi
+
+        jq -cn \
+          --arg region "$region" \
+          --arg service "$service_name" \
+          --arg limit "$limit_name" \
+          --arg scope "$scope_type" \
+          --arg ad "$ad_name" \
+          --arg value "$limit_value" \
+          --arg used "$used_val" \
+          --arg avail "$avail_val" '
+          {
+            region: $region,
+            serviceName: $service,
+            limitName: $limit,
+            scopeType: $scope,
+            availabilityDomain: $ad,
+            limitValue: $value,
+            used: $used,
+            available: $avail
+          }
+        ' >> report/limits/limits_rows.jsonl
+      done < <(
+        jq -r '
+          .data[]?
+          | [
+              (.name // ""),
+              (."scope-type" // .scopeType // ""),
+              (."availability-domain" // .availabilityDomain // ""),
+              (.value // "")
+            ]
+          | @tsv
+        ' "$values_file"
+      )
+      progress_newline
+      [[ "$had_limit_iterations" == "true" ]] || true
       rm -f "$values_file" "$prefixes_file"
-      continue
-    fi
-    local service_name="compute"
-    progress_prefix "build_limits ${region}/${service_name}"
-    local had_limit_iterations="false"
-
-    oci limits value list \
-      --compartment-id "$TENANCY_OCID" \
-      --service-name "$service_name" \
-      --all \
-      --region "$region" \
-      --output json > "$values_file"
-
-    while IFS=$'\t' read -r limit_name scope_type ad_name limit_value; do
-      [[ -n "$limit_name" ]] || continue
-      if ! limit_matches_prefixes "$limit_name" "$prefixes_file"; then
-        continue
-      fi
-      progress_dot
-      had_limit_iterations="true"
-
-      local ra_json
-      local used_val=""
-      local avail_val=""
-
-      if [[ "$scope_type" == "AD" && -n "$ad_name" && "$ad_name" != "null" ]]; then
-        if ra_json="$(oci limits resource-availability get \
-          --compartment-id "$TENANCY_OCID" \
-          --service-name "$service_name" \
-          --limit-name "$limit_name" \
-          --availability-domain "$ad_name" \
-          --region "$region" \
-          --output json 2>/dev/null)"; then
-          used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
-          avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
-        fi
-      else
-        if ra_json="$(oci limits resource-availability get \
-          --compartment-id "$TENANCY_OCID" \
-          --service-name "$service_name" \
-          --limit-name "$limit_name" \
-          --region "$region" \
-          --output json 2>/dev/null)"; then
-          used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
-          avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
-        fi
-      fi
-
-      jq -cn \
-        --arg region "$region" \
-        --arg service "$service_name" \
-        --arg limit "$limit_name" \
-        --arg scope "$scope_type" \
-        --arg ad "$ad_name" \
-        --arg value "$limit_value" \
-        --arg used "$used_val" \
-        --arg avail "$avail_val" '
-        {
-          region: $region,
-          serviceName: $service,
-          limitName: $limit,
-          scopeType: $scope,
-          availabilityDomain: $ad,
-          limitValue: $value,
-          used: $used,
-          available: $avail
-        }
-      ' >> report/limits/limits_rows.jsonl
-    done < <(
-      jq -r '
-        .data[]?
-        | [
-            (.name // ""),
-            (."scope-type" // .scopeType // ""),
-            (."availability-domain" // .availabilityDomain // ""),
-            (.value // "")
-          ]
-        | @tsv
-      ' "$values_file"
-    )
-    progress_newline
-    [[ "$had_limit_iterations" == "true" ]] || true
-    rm -f "$values_file" "$prefixes_file"
+    done
   done
 
   jq -s '
