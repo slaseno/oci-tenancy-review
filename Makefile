@@ -21,7 +21,14 @@ compute: compartments regions
 	@$(SCRIPT) compute-merge
 
 compute-region-%:
-	@$(SCRIPT) compute-region $*
+	@$(SCRIPT) compute-region-prepare $*
+	@targets="$$(awk 'NF {print "compute-compartment-$*___CID___"$$1}' report/compute/regions/$*/.compute_cids_$*.txt)"; \
+	if [[ -n "$$targets" ]]; then $(MAKE) $$targets; fi
+	@$(SCRIPT) compute-region-merge $*
+
+compute-compartment-%:
+	@stem="$*"; region="$${stem%%___CID___*}"; cid="$${stem#*___CID___}"; \
+	$(SCRIPT) _compute-compartment "$$region" "$$cid" "report/compute/regions/$$region/compartments/$$cid.jsonl"
 
 block-storage: compartments regions
 	@regions="$$(awk 'NF {print "block-storage-region-"$$0}' report/regions.txt)"; \
@@ -29,7 +36,14 @@ block-storage: compartments regions
 	@$(SCRIPT) block-storage-merge
 
 block-storage-region-%:
-	@$(SCRIPT) block-storage-region $*
+	@$(SCRIPT) block-storage-region-prepare $*
+	@targets="$$(awk 'NF {print "block-storage-compartment-$*___CID___"$$1}' report/storage/regions/$*/.storage_cids_$*.txt)"; \
+	if [[ -n "$$targets" ]]; then $(MAKE) $$targets; fi
+	@$(SCRIPT) block-storage-region-merge $*
+
+block-storage-compartment-%:
+	@stem="$*"; region="$${stem%%___CID___*}"; cid="$${stem#*___CID___}"; \
+	$(SCRIPT) _storage-compartment "$$region" "$$cid" "report/storage/regions/$$region/compartments/$$cid"
 
 limits: compute block-storage
 	@regions="$$(awk 'NF {print "limits-region-"$$0}' report/regions.txt)"; \

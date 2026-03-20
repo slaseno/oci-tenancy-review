@@ -516,6 +516,14 @@ EOF
   [ -f report/compute/regions/eu-frankfurt-1/compute_instances.json ]
 }
 
+@test "makefile defines compartment-level fanout patterns" {
+  cd "$BATS_TEST_DIRNAME/.."
+  run make -pn all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"compute-compartment-%:"* ]]
+  [[ "$output" == *"block-storage-compartment-%:"* ]]
+}
+
 @test "block-storage-region writes region-scoped artifacts" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"

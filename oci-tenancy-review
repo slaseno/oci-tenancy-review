@@ -620,74 +620,173 @@ ensure_target_regions() {
   [[ -s report/regions.txt ]] || build_regions
 }
 
+script_path() {
+  local dir
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf '%s/%s\n' "$dir" "$(basename "${BASH_SOURCE[0]}")"
+}
+
+get_compartment_parallelism() {
+  local n="${OCI_REVIEW_COMPARTMENT_PARALLELISM:-1}"
+  [[ "$n" =~ ^[0-9]+$ ]] || fatal "OCI_REVIEW_COMPARTMENT_PARALLELISM must be a positive integer"
+  (( n >= 1 )) || fatal "OCI_REVIEW_COMPARTMENT_PARALLELISM must be >= 1"
+  printf '%s\n' "$n"
+}
+
+build_compute_compartment_region() {
+  local region="$1"
+  local cid="$2"
+  local out_file="$3"
+  local cpath
+  cpath="$(get_compartment_path "$cid")"
+  oci_cli compute instance list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+        .data[]? | {
+          compartmentId: $cid,
+          compartmentPath: $cpath,
+          region: .region,
+          instanceId: .id,
+          instanceName: ."display-name",
+          shape: .shape,
+          ocpus: ."shape-config".ocpus,
+          memoryInGBs: ."shape-config"."memory-in-gbs",
+          baselineOcpuUtilization: ."shape-config"."baseline-ocpu-utilization",
+          lifecycleState: ."lifecycle-state",
+          availabilityDomain: ."availability-domain",
+          faultDomain: ."fault-domain",
+          imageId: ."image-id",
+          launchMode: ."launch-mode",
+          sourceType: ."source-details"."source-type",
+          capacityReservationId: ."capacity-reservation-id",
+          dedicatedVmHostId: ."dedicated-vm-host-id",
+          preemptibleActionType: ."preemptible-instance-config"."preemption-action"."type",
+          availabilityRecoveryAction: ."availability-config"."recovery-action",
+          legacyImdsEndpointsDisabled: ."instance-options"."are-legacy-imds-endpoints-disabled",
+          networkType: ."launch-options"."network-type",
+          consistentVolumeNamingEnabled: ."launch-options"."is-consistent-volume-naming-enabled",
+          monitoringDisabled: ."agent-config"."is-monitoring-disabled",
+          managementDisabled: ."agent-config"."is-management-disabled",
+          liveMigrationPreferred: ."is-live-migration-preferred",
+          pvEncryptionInTransitEnabled: ."is-pv-encryption-in-transit-enabled",
+          metadataKeyCount: ((.metadata // {}) | keys | length),
+          freeformTagCount: ((."freeform-tags" // {}) | keys | length),
+          definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
+          timeCreated: ."time-created"
+        }
+      ' > "$out_file"
+}
+
+build_storage_compartment_region() {
+  local region="$1"
+  local cid="$2"
+  local out_prefix="$3"
+  local cpath
+  cpath="$(get_compartment_path "$cid")"
+
+  oci_cli bv volume list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
+        .data[]? | {
+          kind: "block-volume",
+          region: $region,
+          compartmentId: $cid,
+          compartmentPath: $cpath,
+          id: .id,
+          displayName: ."display-name",
+          lifecycleState: ."lifecycle-state",
+          availabilityDomain: ."availability-domain",
+          sizeInGBs: ."size-in-gbs",
+          vpusPerGB: ."vpus-per-gb",
+          autoTuneEnabled: ."is-auto-tune-enabled",
+          kmsKeyId: ."kms-key-id",
+          backupPolicyId: ."backup-policy-id",
+          freeformTagCount: ((."freeform-tags" // {}) | keys | length),
+          definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
+          timeCreated: ."time-created"
+        }
+      ' > "${out_prefix}.inventory.jsonl"
+
+  oci_cli bv boot-volume list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
+        .data[]? | {
+          kind: "boot-volume",
+          region: $region,
+          compartmentId: $cid,
+          compartmentPath: $cpath,
+          id: .id,
+          displayName: ."display-name",
+          lifecycleState: ."lifecycle-state",
+          availabilityDomain: ."availability-domain",
+          sizeInGBs: ."size-in-gbs",
+          vpusPerGB: null,
+          autoTuneEnabled: null,
+          kmsKeyId: ."kms-key-id",
+          backupPolicyId: ."backup-policy-id",
+          freeformTagCount: ((."freeform-tags" // {}) | keys | length),
+          definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
+          timeCreated: ."time-created"
+        }
+      ' >> "${out_prefix}.inventory.jsonl"
+
+  oci_cli bv backup list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c '.data[]? | {sourceId: (."volume-id" // ."source-volume-id" // ""), timeCreated: ."time-created", backupType: (.type // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.block_backups.jsonl"
+  oci_cli bv boot-volume-backup list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c '.data[]? | {sourceId: (."boot-volume-id" // ."source-boot-volume-id" // ""), timeCreated: ."time-created", backupType: (.type // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.boot_backups.jsonl"
+  oci_cli bv block-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c '.data[]? | {sourceId: (."source-volume-id" // ."volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.block_replicas.jsonl"
+  oci_cli bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
+    | jq -c '.data[]? | {sourceId: (."source-boot-volume-id" // ."boot-volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.boot_replicas.jsonl"
+}
+
 build_compute_region() {
+  local region="$1"
+  local cid
+  prepare_compute_region "$region"
+  while IFS= read -r cid; do
+    [[ -n "$cid" ]] || continue
+    build_compute_compartment_region "$region" "$cid" "report/compute/regions/${region}/compartments/${cid}.jsonl"
+  done < "report/compute/regions/${region}/.compute_cids_${region}.txt"
+  merge_compute_region "$region"
+}
+
+prepare_compute_region() {
   local region="$1"
   local out_dir
   local region_target_file
-  local jsonl_file
-  local json_file
-  local csv_file
-  local shapes_file
+  local cid_file
   init_report_dirs
   require_tenancy
   ensure_compartments
   [[ -n "$region" ]] || fatal "Region is required"
 
   out_dir="report/compute/regions/${region}"
-  mkdir -p "$out_dir"
   region_target_file="${out_dir}/compute_target_compartments_${region}.csv"
+  cid_file="${out_dir}/.compute_cids_${region}.txt"
+  mkdir -p "${out_dir}/compartments"
+  rm -f "${out_dir}/compartments/"*.jsonl
+  search "query instance resources" "$region_target_file" "$region"
+  awk -F',' 'NR>1 && $1 != "" {print $1}' "$region_target_file" > "$cid_file"
+}
+
+merge_compute_region() {
+  local region="$1"
+  local out_dir
+  local jsonl_file
+  local json_file
+  local csv_file
+  local shapes_file
+  local -a part_files
+  out_dir="report/compute/regions/${region}"
   jsonl_file="${out_dir}/compute_instances.jsonl"
   json_file="${out_dir}/compute_instances.json"
   csv_file="${out_dir}/compute_instances.csv"
   shapes_file="${out_dir}/compute_shapes_summary.csv"
-
-  > "$jsonl_file"
-  search "query instance resources" "$region_target_file" "$region"
-
-  progress_prefix "build_compute_region processing ${region}"
-  while IFS=',' read -r cid _; do
-    [[ "$cid" == "compartment-id" ]] && continue
-    [[ -n "$cid" ]] || continue
-    progress_dot
-    cpath="$(get_compartment_path "$cid")"
-    oci_cli compute instance list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c --arg cid "$cid" --arg cpath "$cpath" '
-          .data[]? | {
-            compartmentId: $cid,
-            compartmentPath: $cpath,
-            region: .region,
-            instanceId: .id,
-            instanceName: ."display-name",
-            shape: .shape,
-            ocpus: ."shape-config".ocpus,
-            memoryInGBs: ."shape-config"."memory-in-gbs",
-            baselineOcpuUtilization: ."shape-config"."baseline-ocpu-utilization",
-            lifecycleState: ."lifecycle-state",
-            availabilityDomain: ."availability-domain",
-            faultDomain: ."fault-domain",
-            imageId: ."image-id",
-            launchMode: ."launch-mode",
-            sourceType: ."source-details"."source-type",
-            capacityReservationId: ."capacity-reservation-id",
-            dedicatedVmHostId: ."dedicated-vm-host-id",
-            preemptibleActionType: ."preemptible-instance-config"."preemption-action"."type",
-            availabilityRecoveryAction: ."availability-config"."recovery-action",
-            legacyImdsEndpointsDisabled: ."instance-options"."are-legacy-imds-endpoints-disabled",
-            networkType: ."launch-options"."network-type",
-            consistentVolumeNamingEnabled: ."launch-options"."is-consistent-volume-naming-enabled",
-            monitoringDisabled: ."agent-config"."is-monitoring-disabled",
-            managementDisabled: ."agent-config"."is-management-disabled",
-            liveMigrationPreferred: ."is-live-migration-preferred",
-            pvEncryptionInTransitEnabled: ."is-pv-encryption-in-transit-enabled",
-            metadataKeyCount: ((.metadata // {}) | keys | length),
-            freeformTagCount: ((."freeform-tags" // {}) | keys | length),
-            definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
-            timeCreated: ."time-created"
-          }
-        ' >> "$jsonl_file"
-  done < "$region_target_file"
-  progress_newline
-
+  : > "$jsonl_file"
+  shopt -s nullglob
+  part_files=("${out_dir}/compartments/"*.jsonl)
+  shopt -u nullglob
+  if [[ "${#part_files[@]}" -gt 0 ]]; then
+    cat "${part_files[@]}" >> "$jsonl_file"
+  fi
   jq -s '.' "$jsonl_file" > "$json_file"
   jq -r '
     ["compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","source-type","capacity-reservation-id","dedicated-vm-host-id","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
@@ -745,15 +844,22 @@ merge_compute_regions() {
 
 build_storage_region() {
   local region="$1"
+  local cid
+  prepare_storage_region "$region"
+  while IFS= read -r cid; do
+    [[ -n "$cid" ]] || continue
+    build_storage_compartment_region "$region" "$cid" "report/storage/regions/${region}/compartments/${cid}"
+  done < "report/storage/regions/${region}/.storage_cids_${region}.txt"
+  merge_storage_region "$region"
+}
+
+prepare_storage_region() {
+  local region="$1"
   local out_dir
   local volume_targets
   local boot_targets
   local merged_targets
-  local inventory_jsonl
-  local block_backups_jsonl
-  local boot_backups_jsonl
-  local block_replicas_jsonl
-  local boot_replicas_jsonl
+  local cid_file
   init_report_dirs
   require_tenancy
   ensure_compartments
@@ -764,17 +870,9 @@ build_storage_region() {
   volume_targets="${out_dir}/.storage_target_compartments_volume_${region}.csv"
   boot_targets="${out_dir}/.storage_target_compartments_boot_${region}.csv"
   merged_targets="${out_dir}/.storage_target_compartments_${region}.csv"
-  inventory_jsonl="${out_dir}/storage_inventory.jsonl"
-  block_backups_jsonl="${out_dir}/block_backups.jsonl"
-  boot_backups_jsonl="${out_dir}/boot_backups.jsonl"
-  block_replicas_jsonl="${out_dir}/block_replicas.jsonl"
-  boot_replicas_jsonl="${out_dir}/boot_replicas.jsonl"
-
-  > "$inventory_jsonl"
-  > "$block_backups_jsonl"
-  > "$boot_backups_jsonl"
-  > "$block_replicas_jsonl"
-  > "$boot_replicas_jsonl"
+  cid_file="${out_dir}/.storage_cids_${region}.txt"
+  mkdir -p "${out_dir}/compartments"
+  rm -f "${out_dir}/compartments/"*
   echo "region,compartment-id,compartment-path" > "${out_dir}/storage_target_compartments.csv"
 
   search "query volume resources" "$volume_targets" "$region"
@@ -786,6 +884,7 @@ build_storage_region() {
       tail -n +2 "$boot_targets"
     } | sort -u
   } > "$merged_targets"
+  awk -F',' 'NR>1 && $1 != "" {print $1}' "$merged_targets" > "$cid_file"
 
   while IFS=',' read -r cid cpath; do
     [[ "$cid" == "compartment-id" ]] && continue
@@ -793,67 +892,36 @@ build_storage_region() {
     printf '%s,%s,%s\n' "$region" "$cid" "$cpath" >> "${out_dir}/storage_target_compartments.csv"
   done < "$merged_targets"
 
-  progress_prefix "build_storage_region ${region}"
-  while IFS=',' read -r cid _; do
-    [[ "$cid" == "compartment-id" ]] && continue
-    [[ -n "$cid" ]] || continue
-    progress_dot
+}
 
-    cpath="$(get_compartment_path "$cid")"
-    oci_cli bv volume list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
-          .data[]? | {
-            kind: "block-volume",
-            region: $region,
-            compartmentId: $cid,
-            compartmentPath: $cpath,
-            id: .id,
-            displayName: ."display-name",
-            lifecycleState: ."lifecycle-state",
-            availabilityDomain: ."availability-domain",
-            sizeInGBs: ."size-in-gbs",
-            vpusPerGB: ."vpus-per-gb",
-            autoTuneEnabled: ."is-auto-tune-enabled",
-            kmsKeyId: ."kms-key-id",
-            backupPolicyId: ."backup-policy-id",
-            freeformTagCount: ((."freeform-tags" // {}) | keys | length),
-            definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
-            timeCreated: ."time-created"
-          }
-        ' >> "$inventory_jsonl"
+merge_storage_region() {
+  local region="$1"
+  local out_dir
+  local inventory_jsonl
+  local block_backups_jsonl
+  local boot_backups_jsonl
+  local block_replicas_jsonl
+  local boot_replicas_jsonl
+  local -a part_files
+  out_dir="report/storage/regions/${region}"
+  inventory_jsonl="${out_dir}/storage_inventory.jsonl"
+  block_backups_jsonl="${out_dir}/block_backups.jsonl"
+  boot_backups_jsonl="${out_dir}/boot_backups.jsonl"
+  block_replicas_jsonl="${out_dir}/block_replicas.jsonl"
+  boot_replicas_jsonl="${out_dir}/boot_replicas.jsonl"
 
-    oci_cli bv boot-volume list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
-          .data[]? | {
-            kind: "boot-volume",
-            region: $region,
-            compartmentId: $cid,
-            compartmentPath: $cpath,
-            id: .id,
-            displayName: ."display-name",
-            lifecycleState: ."lifecycle-state",
-            availabilityDomain: ."availability-domain",
-            sizeInGBs: ."size-in-gbs",
-            vpusPerGB: null,
-            autoTuneEnabled: null,
-            kmsKeyId: ."kms-key-id",
-            backupPolicyId: ."backup-policy-id",
-            freeformTagCount: ((."freeform-tags" // {}) | keys | length),
-            definedTagNamespaceCount: ((."defined-tags" // {}) | keys | length),
-            timeCreated: ."time-created"
-          }
-        ' >> "$inventory_jsonl"
-
-    oci_cli bv backup list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c '.data[]? | {sourceId: (."volume-id" // ."source-volume-id" // ""), timeCreated: ."time-created", backupType: (.type // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' >> "$block_backups_jsonl"
-    oci_cli bv boot-volume-backup list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c '.data[]? | {sourceId: (."boot-volume-id" // ."source-boot-volume-id" // ""), timeCreated: ."time-created", backupType: (.type // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' >> "$boot_backups_jsonl"
-    oci_cli bv block-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c '.data[]? | {sourceId: (."source-volume-id" // ."volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' >> "$block_replicas_jsonl"
-    oci_cli bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
-      | jq -c '.data[]? | {sourceId: (."source-boot-volume-id" // ."boot-volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' >> "$boot_replicas_jsonl"
-  done < "$merged_targets"
-  progress_newline
+  : > "$inventory_jsonl"
+  : > "$block_backups_jsonl"
+  : > "$boot_backups_jsonl"
+  : > "$block_replicas_jsonl"
+  : > "$boot_replicas_jsonl"
+  shopt -s nullglob
+  part_files=("${out_dir}/compartments/"*.inventory.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$inventory_jsonl"
+  part_files=("${out_dir}/compartments/"*.block_backups.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$block_backups_jsonl"
+  part_files=("${out_dir}/compartments/"*.boot_backups.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$boot_backups_jsonl"
+  part_files=("${out_dir}/compartments/"*.block_replicas.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$block_replicas_jsonl"
+  part_files=("${out_dir}/compartments/"*.boot_replicas.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$boot_replicas_jsonl"
+  shopt -u nullglob
 
   jq -s 'group_by(.sourceId) | map({(.[0].sourceId): {backupCount: length, latestBackupTime: (map(.timeCreated) | max), latestBackupType: (sort_by(.timeCreated) | last | .backupType)}}) | add // {}' "$block_backups_jsonl" > "${out_dir}/block_backup_index.json"
   jq -s 'group_by(.sourceId) | map({(.[0].sourceId): {backupCount: length, latestBackupTime: (map(.timeCreated) | max), latestBackupType: (sort_by(.timeCreated) | last | .backupType)}}) | add // {}' "$boot_backups_jsonl" > "${out_dir}/boot_backup_index.json"
@@ -1571,7 +1639,8 @@ build_storage() {
 
 main() {
   local cmd=""
-  local cmd_arg=""
+  local -a cmd_args
+  cmd_args=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1588,10 +1657,8 @@ main() {
       *)
         if [[ -z "$cmd" ]]; then
           cmd="$1"
-        elif [[ -z "$cmd_arg" ]]; then
-          cmd_arg="$1"
         else
-          fatal "Unknown option: $1"
+          cmd_args+=("$1")
         fi
         ;;
     esac
@@ -1607,12 +1674,28 @@ main() {
   require_cmd sort
 
   case "$cmd" in
+    _compute-compartment)
+      [[ "${#cmd_args[@]}" -eq 3 ]] || fatal "Usage: _compute-compartment <region> <compartment-ocid> <out-file>"
+      build_compute_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}"
+      ;;
+    _storage-compartment)
+      [[ "${#cmd_args[@]}" -eq 3 ]] || fatal "Usage: _storage-compartment <region> <compartment-ocid> <out-prefix>"
+      build_storage_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}"
+      ;;
     regions)
       build_regions
       ;;
     compute-region)
-      [[ -n "$cmd_arg" ]] || fatal "Region argument required for compute-region"
-      build_compute_region "$cmd_arg"
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region"
+      build_compute_region "${cmd_args[0]}"
+      ;;
+    compute-region-prepare)
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region-prepare"
+      prepare_compute_region "${cmd_args[0]}"
+      ;;
+    compute-region-merge)
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region-merge"
+      merge_compute_region "${cmd_args[0]}"
       ;;
     compute-merge)
       merge_compute_regions
@@ -1627,8 +1710,16 @@ main() {
       build_compute
       ;;
     block-storage-region)
-      [[ -n "$cmd_arg" ]] || fatal "Region argument required for block-storage-region"
-      build_storage_region "$cmd_arg"
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region"
+      build_storage_region "${cmd_args[0]}"
+      ;;
+    block-storage-region-prepare)
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region-prepare"
+      prepare_storage_region "${cmd_args[0]}"
+      ;;
+    block-storage-region-merge)
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region-merge"
+      merge_storage_region "${cmd_args[0]}"
       ;;
     block-storage-merge)
       merge_storage_regions
@@ -1637,8 +1728,8 @@ main() {
       build_storage
       ;;
     limits-region)
-      [[ -n "$cmd_arg" ]] || fatal "Region argument required for limits-region"
-      build_limits_region "$cmd_arg"
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for limits-region"
+      build_limits_region "${cmd_args[0]}"
       ;;
     limits-merge)
       merge_limits_regions
