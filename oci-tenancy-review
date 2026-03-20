@@ -95,6 +95,62 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fatal "Missing required command: $1"
 }
 
+is_rate_limited_error() {
+  local msg="$1"
+  local msg_lc
+  msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
+
+  [[ "$msg_lc" == *"toomanyrequests"* ]] && return 0
+  [[ "$msg_lc" == *"status: 429"* ]] && return 0
+  [[ "$msg_lc" == *"status': 429"* ]] && return 0
+  [[ "$msg_lc" == *'status": 429'* ]] && return 0
+  [[ "$msg_lc" == *"rate limit"* ]] && return 0
+  [[ "$msg_lc" == *"throttl"* ]] && return 0
+  return 1
+}
+
+oci_cli() {
+  local stderr_file
+  local rc
+  local stderr_text
+  local bailout_seconds
+  local jitter_seconds
+  local wait_seconds
+
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-stderr.XXXXXX")"
+  if command oci "$@" 2>"$stderr_file"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [[ "$rc" -eq 0 ]]; then
+    if [[ -s "$stderr_file" ]]; then
+      cat "$stderr_file" >&2
+    fi
+    rm -f "$stderr_file"
+    return 0
+  fi
+
+  stderr_text="$(cat "$stderr_file")"
+  if [[ -n "$stderr_text" ]]; then
+    printf '%s\n' "$stderr_text" >&2
+  fi
+  rm -f "$stderr_file"
+
+  if is_rate_limited_error "$stderr_text"; then
+    bailout_seconds="${OCI_RATE_LIMIT_BAILOUT_SECONDS:-2}"
+    jitter_seconds=$((RANDOM % 2))
+    wait_seconds=$((bailout_seconds + jitter_seconds))
+    warn "oci call rate-limited; retrying once after ${wait_seconds}s: oci $*"
+    sleep "$wait_seconds"
+    command oci "$@"
+    return $?
+  fi
+
+  return "$rc"
+}
+
 
 init_report_dirs() {
   mkdir -p report report/compute report/policies report/limits report/storage
@@ -115,7 +171,7 @@ get_review_regions() {
 }
 
 get_all_subscribed_regions() {
-  oci iam region-subscription list \
+  oci_cli iam region-subscription list \
     --tenancy-id "$TENANCY_OCID" \
     --all \
     --output json \
@@ -147,7 +203,7 @@ is_blacklisted_region() {
 
 is_region_reachable() {
   local region="$1"
-  oci iam availability-domain list \
+  oci_cli iam availability-domain list \
     --compartment-id "$TENANCY_OCID" \
     --region "$region" \
     --all \
@@ -228,7 +284,7 @@ build_compartments() {
   init_report_dirs
   require_tenancy
 
-  oci iam compartment list \
+  oci_cli iam compartment list \
     --compartment-id "$TENANCY_OCID" \
     --compartment-id-in-subtree true \
     --access-level ANY \
@@ -336,26 +392,26 @@ search() {
       progress_dot
       had_iterations="true"
       if [[ -n "$region" && -n "$page" ]]; then
-        oci search resource structured-search \
+        oci_cli search resource structured-search \
           --query-text "$query_text" \
           --limit 1000 \
           --page "$page" \
           --region "$region" \
           --output json > "$resp_file"
       elif [[ -n "$region" ]]; then
-        oci search resource structured-search \
+        oci_cli search resource structured-search \
           --query-text "$query_text" \
           --limit 1000 \
           --region "$region" \
           --output json > "$resp_file"
       elif [[ -n "$page" ]]; then
-        oci search resource structured-search \
+        oci_cli search resource structured-search \
           --query-text "$query_text" \
           --limit 1000 \
           --page "$page" \
           --output json > "$resp_file"
       else
-        oci search resource structured-search \
+        oci_cli search resource structured-search \
           --query-text "$query_text" \
           --limit 1000 \
           --output json > "$resp_file"
@@ -424,7 +480,7 @@ build_policies() {
     progress_dot
     had_policy_iterations="true"
     cpath="$(get_compartment_path "$cid")"
-    oci iam policy list -c "$cid" --all --output json \
+    oci_cli iam policy list -c "$cid" --all --output json \
       | jq -c --arg cid "$cid" --arg cpath "$cpath" '
           .data[]? | {
             compartmentId: $cid,
@@ -481,7 +537,7 @@ build_compute() {
       progress_dot
       had_compute_iterations="true"
       cpath="$(get_compartment_path "$cid")"
-      oci compute instance list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli compute instance list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c --arg cid "$cid" --arg cpath "$cpath" '
             .data[]? | {
               compartmentId: $cid,
@@ -606,7 +662,7 @@ build_limits() {
       progress_prefix "build_limits ${region}/${service_name}"
       local had_limit_iterations="false"
 
-      oci limits value list \
+      oci_cli limits value list \
         --compartment-id "$TENANCY_OCID" \
         --service-name "$service_name" \
         --all \
@@ -628,7 +684,7 @@ build_limits() {
         local avail_val=""
 
         if [[ "$scope_type" == "AD" && -n "$ad_name" && "$ad_name" != "null" ]]; then
-          if ra_json="$(oci limits resource-availability get \
+          if ra_json="$(oci_cli limits resource-availability get \
             --compartment-id "$TENANCY_OCID" \
             --service-name "$service_name" \
             --limit-name "$limit_name" \
@@ -639,7 +695,7 @@ build_limits() {
             avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
           fi
         else
-          if ra_json="$(oci limits resource-availability get \
+          if ra_json="$(oci_cli limits resource-availability get \
             --compartment-id "$TENANCY_OCID" \
             --service-name "$service_name" \
             --limit-name "$limit_name" \
@@ -802,7 +858,7 @@ build_storage() {
 
       cpath="$(get_compartment_path "$cid")"
 
-      oci bv volume list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv volume list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
             .data[]? | {
               kind: "block-volume",
@@ -824,7 +880,7 @@ build_storage() {
             }
           ' >> report/storage/storage_inventory.jsonl
 
-      oci bv boot-volume list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv boot-volume list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
             .data[]? | {
               kind: "boot-volume",
@@ -846,7 +902,7 @@ build_storage() {
             }
           ' >> report/storage/storage_inventory.jsonl
 
-      oci bv backup list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv backup list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c '
             .data[]? | {
               sourceId: (."volume-id" // ."source-volume-id" // ""),
@@ -856,7 +912,7 @@ build_storage() {
             } | select(.sourceId != "")
           ' >> report/storage/block_backups.jsonl
 
-      oci bv boot-volume-backup list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv boot-volume-backup list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c '
             .data[]? | {
               sourceId: (."boot-volume-id" // ."source-boot-volume-id" // ""),
@@ -866,7 +922,7 @@ build_storage() {
             } | select(.sourceId != "")
           ' >> report/storage/boot_backups.jsonl
 
-      oci bv block-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv block-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c '
             .data[]? | {
               sourceId: (."source-volume-id" // ."volume-id" // ."source-details".id // .sourceDetails.id // ""),
@@ -874,7 +930,7 @@ build_storage() {
             } | select(.sourceId != "")
           ' >> report/storage/block_replicas.jsonl
 
-      oci bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
+      oci_cli bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
         | jq -c '
             .data[]? | {
               sourceId: (."source-boot-volume-id" // ."boot-volume-id" // ."source-details".id // .sourceDetails.id // ""),

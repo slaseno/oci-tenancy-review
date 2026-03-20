@@ -5,6 +5,8 @@ setup() {
   TMPDIR_TEST="$(mktemp -d)"
   export WORKDIR="$TMPDIR_TEST/work"
   mkdir -p "$WORKDIR"
+  export OCI_TEST_THROTTLE_STATE_FILE="$TMPDIR_TEST/oci_throttle_state"
+  rm -f "$OCI_TEST_THROTTLE_STATE_FILE"
 
   mkdir -p "$TMPDIR_TEST/bin"
   cat > "$TMPDIR_TEST/bin/oci" <<'MOCK'
@@ -12,6 +14,14 @@ setup() {
 set -euo pipefail
 
 args="$*"
+
+if [[ -n "${OCI_TEST_THROTTLE_ONCE_PATTERN:-}" ]] && [[ "$args" == *"$OCI_TEST_THROTTLE_ONCE_PATTERN"* ]]; then
+  if [[ ! -f "${OCI_TEST_THROTTLE_STATE_FILE:-}" ]]; then
+    : > "${OCI_TEST_THROTTLE_STATE_FILE:-/tmp/oci_throttle_state}"
+    echo "ServiceError: {'status': 429, 'code': 'TooManyRequests', 'message': 'Rate limit exceeded'}" >&2
+    exit 1
+  fi
+fi
 
 if [[ "$args" == iam\ compartment\ list* ]]; then
   cat <<'JSON'
@@ -477,6 +487,7 @@ teardown() {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
   export OCI_REVIEW_REGIONS="eu-frankfurt-1,eu-mars-1"
+  rm -f report/regions.txt
 
   run "$SCRIPT_PATH" compute
   [ "$status" -eq 0 ]
@@ -503,6 +514,16 @@ EOF
   run "$SCRIPT_PATH" compute --debug
   [ "$status" -eq 0 ]
   [[ "$output" == *"+ oci iam region-subscription list --tenancy-id ocid1.tenancy.oc1..tenancy --all --output json"* ]]
+}
+
+@test "compute retries once on OCI rate-limited error" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  export OCI_TEST_THROTTLE_ONCE_PATTERN="iam region-subscription list"
+
+  run "$SCRIPT_PATH" compute
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rate-limited"* ]]
 }
 
 @test "make all declares dependency graph for parallel execution" {
