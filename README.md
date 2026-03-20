@@ -74,6 +74,9 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 # Run all reports
 ./oci-tenancy-review all
 
+# Or run dependency-aware make graph (parallel-safe)
+MAKEFLAGS="-j 8 --no-print-directory" make all
+
 # Your reports are now available in the report subfolder
 # If you are within a OCI cloud shell, you may want to archive this folder to easily download it
 tar -czvf report.tar.gz report
@@ -109,7 +112,7 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 ### Optional: run a specific reporter
 
 ```bash
-# Build report/regions.txt (subscribed OCI regions)
+# Build report/regions.txt (reachable, non-blacklisted target regions)
 ./oci-tenancy-review regions
 
 # Build report/compartments.csv
@@ -139,7 +142,10 @@ Notes:
 
 ### `report/regions.txt`
 
-Newline-separated OCI region names subscribed for the tenancy (for example `eu-frankfurt-1`).
+Newline-separated target region names used for discovery (for example `eu-frankfurt-1`), after applying:
+- `OCI_REVIEW_REGIONS` selection (or all subscribed if unset)
+- reachability checks
+- `BLACKLISTED_REGIONS` exclusions
 
 ### `report/compartments.csv`
 

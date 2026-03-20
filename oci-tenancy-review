@@ -17,7 +17,7 @@ Usage: ./oci-tenancy-review <command> [-d|--debug]
 Version: ${VERSION}
 
 Commands:
-  regions        Export subscribed region names to report/regions.txt
+  regions        Export reachable/non-blacklisted target region names to report/regions.txt
   compartments   Build tenancy compartment map at report/compartments.csv
   policies       Export tenancy policy statements to report/policies/policy_statements.csv
   compute        Export compute inventory to report/compute/compute_instances.csv
@@ -180,6 +180,16 @@ filter_reachable_regions() {
 }
 
 resolve_target_regions() {
+  if [[ -s report/regions.txt ]]; then
+    log "using cached target regions from report/regions.txt"
+    cat report/regions.txt
+    return 0
+  fi
+
+  build_regions
+}
+
+resolve_target_regions_uncached() {
   local -a requested_regions
   local -a regions
   requested_regions=()
@@ -209,7 +219,7 @@ build_regions() {
   init_report_dirs
   require_tenancy
 
-  get_all_subscribed_regions | sort -u > report/regions.txt
+  resolve_target_regions_uncached > report/regions.txt
   verbose "wrote 'report/regions.txt'"
   cat report/regions.txt
 }
@@ -445,6 +455,7 @@ build_compute() {
   init_report_dirs
   require_tenancy
   ensure_compartments
+  ensure_target_regions
   local -a regions
   regions=()
   while IFS= read -r region; do
@@ -531,6 +542,10 @@ ensure_compute_inventory() {
 
 ensure_storage_inventory() {
   [[ -s report/storage/storage_inventory_enriched.json ]] || build_storage
+}
+
+ensure_target_regions() {
+  [[ -s report/regions.txt ]] || build_regions
 }
 
 build_limits() {
@@ -736,6 +751,7 @@ build_storage() {
   init_report_dirs
   require_tenancy
   ensure_compartments
+  ensure_target_regions
 
   local -a regions
   regions=()

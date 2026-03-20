@@ -401,8 +401,11 @@ teardown() {
   run "$SCRIPT_PATH" regions
   [ "$status" -eq 0 ]
   [ -f report/regions.txt ]
+  run cat report/regions.txt
+  [ "$status" -eq 0 ]
   [[ "$output" == *"eu-frankfurt-1"* ]]
   [[ "$output" == *"eu-zurich-1"* ]]
+  [[ "$output" != *"eu-kragujevac-1"* ]]
 }
 
 @test "policies command writes policy_statements.csv" {
@@ -480,6 +483,19 @@ teardown() {
   [[ "$output" == *"Skipping unreachable region: eu-mars-1"* ]]
 }
 
+@test "compute uses cached report/regions.txt automatically" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  mkdir -p report
+  cat > report/regions.txt <<'EOF'
+eu-zurich-1
+EOF
+
+  run "$SCRIPT_PATH" compute
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"using cached target regions from report/regions.txt"* ]]
+}
+
 @test "debug mode enables bash xtrace output" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
@@ -487,4 +503,18 @@ teardown() {
   run "$SCRIPT_PATH" compute --debug
   [ "$status" -eq 0 ]
   [[ "$output" == *"+ oci iam region-subscription list --tenancy-id ocid1.tenancy.oc1..tenancy --all --output json"* ]]
+}
+
+@test "make all declares dependency graph for parallel execution" {
+  cd "$BATS_TEST_DIRNAME/.."
+
+  [ -f Makefile ]
+
+  run make -pn all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"all: compartments policies compute block-storage limits"* ]]
+  [[ "$output" == *"policies: compartments"* ]]
+  [[ "$output" == *"compute: compartments regions"* ]]
+  [[ "$output" == *"block-storage: compartments regions"* ]]
+  [[ "$output" == *"limits: compute block-storage"* ]]
 }
