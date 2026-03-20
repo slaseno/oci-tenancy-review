@@ -507,6 +507,24 @@ EOF
   [[ "$output" == *"using cached target regions from report/regions.txt"* ]]
 }
 
+@test "compute-region writes region-scoped artifacts" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+
+  run "$SCRIPT_PATH" compute-region eu-frankfurt-1
+  [ "$status" -eq 0 ]
+  [ -f report/compute/regions/eu-frankfurt-1/compute_instances.json ]
+}
+
+@test "block-storage-region writes region-scoped artifacts" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+
+  run "$SCRIPT_PATH" block-storage-region eu-frankfurt-1
+  [ "$status" -eq 0 ]
+  [ -f report/storage/regions/eu-frankfurt-1/storage_inventory_enriched.json ]
+}
+
 @test "debug mode enables bash xtrace output" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
@@ -536,6 +554,9 @@ EOF
   [[ "$output" == *"all: compartments policies compute block-storage limits"* ]]
   [[ "$output" == *"policies: compartments"* ]]
   [[ "$output" == *"compute: compartments regions"* ]]
+  [[ "$output" == *"compute-region-%:"* ]]
   [[ "$output" == *"block-storage: compartments regions"* ]]
+  [[ "$output" == *"block-storage-region-%:"* ]]
   [[ "$output" == *"limits: compute block-storage"* ]]
+  [[ "$output" == *"limits-region-%:"* ]]
 }

@@ -121,11 +121,20 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 # Build compute inventory CSVs at report/compute/
 ./oci-tenancy-review compute
 
+# Build compute inventory for one region at report/compute/regions/<region>/
+./oci-tenancy-review compute-region eu-frankfurt-1
+
 # Build block + boot volume inventory CSV at report/storage/
 ./oci-tenancy-review block-storage
 
+# Build storage inventory for one region at report/storage/regions/<region>/
+./oci-tenancy-review block-storage-region eu-frankfurt-1
+
 # Build compute + block-storage limits posture CSV at report/limits/
 ./oci-tenancy-review limits
+
+# Build limits posture for one region at report/limits/regions/<region>/
+./oci-tenancy-review limits-region eu-frankfurt-1
 
 # Build report/policies/policy_statements.csv
 ./oci-tenancy-review policies
