@@ -169,7 +169,7 @@ oci_cli() {
     bailout_seconds="${OCI_RATE_LIMIT_BAILOUT_SECONDS:-2}"
     jitter_seconds=$((RANDOM % 2))
     wait_seconds=$((bailout_seconds + jitter_seconds))
-    warn "oci call rate-limited; retrying once after ${wait_seconds}s: oci $*"
+    warn "oci call rate-limited; retrying once after ${wait_seconds}s"
     sleep "$wait_seconds"
     progress_network_call_request
     command oci "$@"
@@ -533,9 +533,6 @@ build_policy_compartment() {
           statements: .statements
         }
       ' > "$out_file"
-  local total
-  total="$(wc -l < "$out_file" | tr -d ' ')"
-  verbose "Done. ${total} policies in ${cid}."
 }
 
 merge_policies() {
@@ -636,9 +633,6 @@ build_compute_compartment_region() {
           timeCreated: ."time-created"
         }
       ' > "$out_file"
-  local total
-  total="$(wc -l < "$out_file" | tr -d ' ')"
-  verbose "Done. ${total} instances in ${region}/${cid}."
 }
 
 build_storage_compartment_region() {
@@ -700,9 +694,6 @@ build_storage_compartment_region() {
     | jq -c '.data[]? | {sourceId: (."source-volume-id" // ."volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.block_replicas.jsonl"
   oci_cli bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
     | jq -c '.data[]? | {sourceId: (."source-boot-volume-id" // ."boot-volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.boot_replicas.jsonl"
-  local total
-  total="$(wc -l < "${out_prefix}.inventory.jsonl" | tr -d ' ')"
-  verbose "Done. ${total} disks in ${region}/${cid}."
 }
 
 build_compute_region() {
