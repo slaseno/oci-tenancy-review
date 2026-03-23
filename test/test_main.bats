@@ -436,7 +436,7 @@ teardown() {
 @test "limits command writes service_limits.csv" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
-  export OCI_REVIEW_REGIONS="eu-frankfurt-1"
+  export REGIONS="eu-frankfurt-1"
 
   run "$SCRIPT_PATH" limits
   [ "$status" -eq 0 ]
@@ -453,7 +453,7 @@ teardown() {
 @test "block-storage command writes storage_inventory.csv with dr fields" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
-  export OCI_REVIEW_REGIONS="eu-frankfurt-1"
+  export REGIONS="eu-frankfurt-1"
 
   run "$SCRIPT_PATH" block-storage
   [ "$status" -eq 0 ]
@@ -483,10 +483,10 @@ teardown() {
   [[ "$output" == *",2,16,"* ]]
 }
 
-@test "compute skips unreachable regions from OCI_REVIEW_REGIONS" {
+@test "compute skips unreachable regions from REGIONS" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
-  export OCI_REVIEW_REGIONS="eu-frankfurt-1,eu-mars-1"
+  export REGIONS="eu-frankfurt-1,eu-mars-1"
   rm -f report/regions.txt
 
   run "$SCRIPT_PATH" compute

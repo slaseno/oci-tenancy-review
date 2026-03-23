@@ -42,7 +42,7 @@ Required environment:
   TENANCY_OCID   Tenancy OCID (ocid1.tenancy...)
 Optional environment:
   DEBUG         Set to 'true' to enable bash xtrace output.
-  OCI_REVIEW_REGIONS  Comma-separated region list for compute discovery (for example: eu-frankfurt-1,eu-zurich-1).
+  REGIONS             Comma-separated region list for compute discovery (for example: eu-frankfurt-1,eu-zurich-1).
                       If unset, all subscribed regions are used.
   BLACKLISTED_REGIONS Comma-separated region blacklist for compute discovery.
                       Default: eu-kragujevac-1
@@ -194,11 +194,11 @@ require_tenancy() {
 }
 
 get_review_regions() {
-  if [[ -z "${OCI_REVIEW_REGIONS:-}" ]]; then
+  if [[ -z "${REGIONS:-}" ]]; then
     return 0
   fi
 
-  echo "$OCI_REVIEW_REGIONS" \
+  echo "$REGIONS" \
     | tr ',' '\n' \
     | awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); if (length($0) > 0) print $0}'
 }
@@ -277,7 +277,7 @@ resolve_target_regions_uncached() {
   local -a requested_regions
   local -a regions
   requested_regions=()
-  if [[ -n "${OCI_REVIEW_REGIONS:-}" ]]; then
+  if [[ -n "${REGIONS:-}" ]]; then
     while IFS= read -r region; do
       [[ -n "$region" ]] && requested_regions+=("$region")
     done < <(get_review_regions || true)

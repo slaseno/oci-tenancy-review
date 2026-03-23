@@ -120,18 +120,18 @@ oci-tenancy-review/report.tar.gz
 
 ### Optional: set target region(s) for discovery
 
-If `OCI_REVIEW_REGIONS` is unset, discovery runs in all subscribed regions.
-Set `OCI_REVIEW_REGIONS` to override this and target one or more specific regions:
+If `REGIONS` is unset, discovery runs in all subscribed regions.
+Set `REGIONS` to override this and target one or more specific regions:
 
 ```bash
 # single region
-export OCI_REVIEW_REGIONS="eu-frankfurt-1"
+export REGIONS="eu-frankfurt-1"
 
 # multiple regions (comma-separated)
-export OCI_REVIEW_REGIONS="eu-frankfurt-1,eu-zurich-1"
+export REGIONS="eu-frankfurt-1,eu-zurich-1"
 ```
 
-When targeting regions (default all subscribed or `OCI_REVIEW_REGIONS`), the script
+When targeting regions (default all subscribed or `REGIONS`), the script
 first checks if each region is reachable and automatically skips unreachable ones.
 By default, `eu-kragujevac-1` is blacklisted. You can override blacklist regions with:
 
@@ -185,7 +185,7 @@ Notes:
 ### `report/regions.txt`
 
 Newline-separated target region names used for discovery (for example `eu-frankfurt-1`), after applying:
-- `OCI_REVIEW_REGIONS` selection (or all subscribed if unset)
+- `REGIONS` selection (or all subscribed if unset)
 - reachability checks
 - `BLACKLISTED_REGIONS` exclusions
 
