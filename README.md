@@ -10,9 +10,6 @@ We focus on **speed by concurrently scraping specific OCI domains** (e.g. comput
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
     - [Set tenancy OCID (required)](#set-tenancy-ocid-required)
-      - [Option 1: OCI Cloud Shell](#option-1-oci-cloud-shell)
-      - [Option 2: Local ENV](#option-2-local-env)
-      - [Option 3: Set manually](#option-3-set-manually)
   - [Usage](#usage)
     - [Optional: set target region(s) for discovery](#optional-set-target-regions-for-discovery)
     - [Optional: run a specific reporter](#optional-run-a-specific-reporter)
@@ -51,9 +48,12 @@ chmod +x ./oci-tenancy-review
 
 You need administrative access to your tenancy, the tenancy you want to inspect must be supplied via the env var `TENANCY_OCID`.
 
-#### Option 1: OCI Cloud Shell
+Use one of the following three options depending on your environment:
 
-If you are running inside OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm), use tenancy OCID from current OCI CLI context by default.
+<details open>
+<summary>Option 1: Automatically set TENANCY_OCID within OCI Cloud Shell</summary>
+
+If you are running inside [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm), simply reuse the tenancy OCID from current OCI CLI context:
 
 ```bash
 export TENANCY_OCID="${TENANCY_OCID:-$(
@@ -68,10 +68,12 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
 echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 
 ```
+</details>
 
-#### Option 2: Local ENV
+<details>
+<summary>Option 2: Automatically set TENANCY_OCID on your local machine</summary>
 
-Read tenancy OCID from ~/.oci/config (uses `OCI_CLI_PROFILE` or `DEFAULT`)
+Read tenancy OCID from `~/.oci/config` (uses `OCI_CLI_PROFILE` or `DEFAULT`):
 
 ```bash
 OCI_PROFILE="${OCI_CLI_PROFILE:-DEFAULT}"
@@ -88,7 +90,12 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 
 ```
 
-#### Option 3: Set manually
+</details>
+
+<details>
+<summary>Option 3: Set TENANCY_OCID manually</summary>
+
+To explicitly set your `TENANCY_OCID` use the following:
 
 ```bash
 # cat ~/.oci/config
@@ -96,6 +103,9 @@ export TENANCY_OCID="ocid1.tenancy.oc1...."
 echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 
 ```
+
+</details>
+
 
 ## Usage
 
