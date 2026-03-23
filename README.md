@@ -51,7 +51,7 @@ You need administrative access to your tenancy, the tenancy you want to inspect 
 Use one of the following three options depending on your environment:
 
 <details open>
-<summary>Option 1: Automatically set TENANCY_OCID within OCI Cloud Shell</summary>
+<summary><b>Option 1: Automatically set TENANCY_OCID within OCI Cloud Shell</b></summary>
 
 If you are running inside [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm), simply reuse the tenancy OCID from current OCI CLI context:
 
@@ -71,7 +71,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 </details>
 
 <details>
-<summary>Option 2: Automatically set TENANCY_OCID on your local machine</summary>
+<summary><b>Option 2: Automatically set TENANCY_OCID on your local machine</b></summary>
 
 Read tenancy OCID from `~/.oci/config` (uses `OCI_CLI_PROFILE` or `DEFAULT`):
 
@@ -93,7 +93,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 </details>
 
 <details>
-<summary>Option 3: Set TENANCY_OCID manually</summary>
+<summary><b>Option 3: Set TENANCY_OCID manually</b></summary>
 
 To explicitly set your `TENANCY_OCID` use the following:
 
