@@ -2,9 +2,9 @@
 
 > **DISCLAIMER** - This is not an official Oracle application. It is not supported by Oracle Support.
 
-This repository provides `./oci-tenancy-review`, a CLI tool to easily generate OCI tenancy bill of materials as CSVs under `report/`, compatible with [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm).
+This repository provides `./oci-tenancy-review`, a CLI tool to easily generate OCI tenancy bill of materials (BOMs) exported as CSV, compatible with [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm).
 
-The focus of this CLI is **speed** (and concurrent execution) of very specific domains (compute, block-storage, limits, policies) rather than providing a complete view of a whole OCI tenancy.
+We focus on **speed by concurrently scraping specific OCI domains** (e.g. compute, block-storage, limits) rather than providing a full view of a whole OCI tenancy.
 
 - [OCI Tenancy Review](#oci-tenancy-review)
   - [Prerequisites](#prerequisites)
@@ -111,7 +111,7 @@ tar -czvf report.tar.gz report
 
 `oci-tenancy-review` is the user-facing entrypoint. For workflow commands (`all`, `policies`,
 `compute`, `block-storage`, `limits`) it internally executes the dependency-aware Make graph.
-By default it uses `MAKEFLAGS="-j 4 --no-print-directory"` when `MAKEFLAGS` is unset.
+By default it uses `MAKEFLAGS="-j 8"` when `MAKEFLAGS` is unset.
 
 If you used OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm) to execute the above, you should now be able to download the archived report by navigating to "Cog -> Download" (top right) and targeting this file:
 ```
