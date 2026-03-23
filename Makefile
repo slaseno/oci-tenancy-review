@@ -8,7 +8,7 @@ SHELL := /bin/bash
 
 SCRIPT := ./oci-tenancy-review
 
-all: compute block-storage limits policies
+all: regions compartments compute block-storage limits policies
 
 compartments:
 	@$(SCRIPT) compartments
