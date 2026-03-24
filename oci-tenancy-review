@@ -29,7 +29,7 @@ Commands:
   object-storage        Export object storage bucket inventory to report/object-storage/buckets_inventory.csv
   object-storage-region Fetch object storage inventory for one region to report/object-storage/regions/<region>/
   object-storage-merge  Merge region object storage artifacts into report/object-storage/buckets_inventory.csv
-  limits         Export compute + block-storage limits posture to report/limits/service_limits.csv
+  limits         Export compute + block-storage + object-storage limits posture to report/limits/service_limits.csv
   limits-region  Fetch limits posture for one region to report/limits/regions/<region>/
   limits-merge   Merge region limits artifacts into report/limits/service_limits.csv
   all            Run compartments + policies + compute + block-storage + object-storage + limits
@@ -1116,17 +1116,10 @@ build_limits_region() {
   [[ -s "$storage_region_json" ]] || fatal "Missing region storage artifact: $storage_region_json"
   mkdir -p "$out_dir"
 
-  if [[ "$(jq 'length' "$compute_region_json")" -eq 0 ]] && [[ "$(jq 'length' "$storage_region_json")" -eq 0 ]]; then
-    echo "[]" > "${out_dir}/service_limits.json"
-    jq -n -r '["region","service-name","limit-name","scope-type","availability-domain","limit-value","used","available","usage-percent","id"] | @csv' > "${out_dir}/service_limits.csv"
-    verbose "Done. 0 limits in ${region}."
-    return 0
-  fi
-
   rows_jsonl="${out_dir}/limits_rows.jsonl"
   > "$rows_jsonl"
   local service_name
-  for service_name in compute block-storage; do
+  for service_name in compute block-storage object-storage; do
     values_file="${out_dir}/.values_${region}_${service_name}.json"
     prefixes_file="${out_dir}/.prefixes_${region}.txt"
     if [[ "$service_name" == "compute" ]]; then
@@ -1136,6 +1129,12 @@ build_limits_region() {
     oci_cli limits value list --compartment-id "$TENANCY_OCID" --service-name "$service_name" --all --region "$region" --output json > "$values_file"
     while IFS=$'\t' read -r limit_name scope_type ad_name limit_value; do
       [[ -n "$limit_name" ]] || continue
+      # OCI object-storage limits can return REGION-scoped values in availability-domain with empty value.
+      # Normalize to our CSV schema: availability-domain empty, limit-value populated.
+      if [[ "$scope_type" != "AD" ]] && [[ -z "$limit_value" ]] && [[ "$ad_name" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        limit_value="$ad_name"
+        ad_name=""
+      fi
       if [[ "$service_name" == "compute" ]] && ! limit_matches_prefixes "$limit_name" "$prefixes_file"; then
         continue
       fi

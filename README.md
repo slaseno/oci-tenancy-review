@@ -180,7 +180,7 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 # Build object storage inventory for one region at report/object-storage/regions/<region>/
 ./oci-tenancy-review object-storage-region eu-frankfurt-1
 
-# Build compute + block-storage limits posture CSV at report/limits/
+# Build compute + block-storage + object-storage limits posture CSV at report/limits/
 ./oci-tenancy-review limits
 
 # Build limits posture for one region at report/limits/regions/<region>/
@@ -364,7 +364,7 @@ CSV header:
 - `id` (stable key: `region:service-name:scope-type:availability-domain:limit-name`)
 
 Rows are ordered by `usage-percent` descending, then region/service/limit.
-This report currently focuses on compute and block-storage service limits.
+This report currently focuses on compute, block-storage, and object-storage service limits.
 
 ### Per-Region Reports
 

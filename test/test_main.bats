@@ -89,7 +89,8 @@ if [[ "$args" == limits\ service\ list* ]]; then
 {
   "data": [
     {"name": "compute"},
-    {"name": "block-storage"}
+    {"name": "block-storage"},
+    {"name": "object-storage"}
   ]
 }
 JSON
@@ -105,6 +106,18 @@ if [[ "$args" == limits\ value\ list* ]]; then
       "name": "standard-e4-core-count",
       "scope-type": "REGION",
       "value": 10
+    }
+  ]
+}
+JSON
+  elif [[ "$args" == *"--service-name object-storage"* ]]; then
+    cat <<'JSON'
+{
+  "data": [
+    {
+      "name": "bucket-count",
+      "scope-type": "REGION",
+      "availability-domain": "1000"
     }
   ]
 }
@@ -132,6 +145,15 @@ if [[ "$args" == limits\ resource-availability\ get* ]]; then
   "data": {
     "used": 9,
     "available": 1
+  }
+}
+JSON
+  elif [[ "$args" == *"--service-name object-storage"* ]]; then
+    cat <<'JSON'
+{
+  "data": {
+    "used": 123,
+    "available": 877
   }
 }
 JSON
@@ -571,7 +593,10 @@ teardown() {
   [[ "$output" == *"region,service-name,limit-name,scope-type,availability-domain,limit-value,used,available,usage-percent,id"* ]]
   [[ "$output" == *"eu-frankfurt-1,compute"* ]]
   [[ "$output" == *"eu-frankfurt-1,block-storage"* ]]
+  [[ "$output" == *"eu-frankfurt-1,object-storage"* ]]
   [[ "$output" == *"standard-e4-core-count"* ]]
+  [[ "$output" == *"bucket-count"* ]]
+  [[ "$output" == *"eu-frankfurt-1,object-storage,bucket-count,REGION,,1000,123,877,12.3,eu-frankfurt-1:object-storage:REGION::bucket-count"* ]]
   [[ "$output" == *"eu-frankfurt-1:compute:REGION"* ]]
 }
 
