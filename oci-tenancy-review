@@ -29,15 +29,18 @@ Commands:
   object-storage        Export object storage bucket inventory to report/object-storage/buckets_inventory.csv
   object-storage-region Fetch object storage inventory for one region to report/object-storage/regions/<region>/
   object-storage-merge  Merge region object storage artifacts into report/object-storage/buckets_inventory.csv
-  limits         Export compute + block-storage + object-storage limits posture to report/limits/service_limits.csv
-  limits-region  Fetch limits posture for one region to report/limits/regions/<region>/
-  limits-merge   Merge region limits artifacts into report/limits/service_limits.csv
+  compute-limits        Export compute service limits to report/limits/compute_limits.csv
+  block-storage-limits  Export block-storage service limits to report/limits/block_storage_limits.csv
+  object-storage-limits Export object-storage service limits to report/limits/object_storage_limits.csv
+  limits                Export merged limits posture to report/limits/service_limits.csv
+  limits-region         Fetch limits posture for one region to report/limits/regions/<region>/ (optional service scope)
+  limits-merge          Merge service-specific limits artifacts into report/limits/service_limits.csv
   all            Run compartments + policies + compute + block-storage + object-storage + limits
   help           Show this help
 
 Note:
   Command 'all' is always orchestrated through Make.
-  Parallel workflow commands (policies, compute, block-storage, object-storage, limits)
+  Parallel workflow commands (policies, compute, block-storage, object-storage, compute-limits, block-storage-limits, object-storage-limits, limits)
   are orchestrated through Make when a local Makefile is present.
   Default MAKEFLAGS when unset: -j 8
 
@@ -65,7 +68,11 @@ Examples:
   ./oci-tenancy-review object-storage-region eu-frankfurt-1
   ./oci-tenancy-review object-storage-merge
   ./oci-tenancy-review limits
+  ./oci-tenancy-review compute-limits
+  ./oci-tenancy-review block-storage-limits
+  ./oci-tenancy-review object-storage-limits
   ./oci-tenancy-review limits-region eu-frankfurt-1
+  ./oci-tenancy-review limits-region eu-frankfurt-1 object-storage
   ./oci-tenancy-review limits-merge
   DEBUG=true ./oci-tenancy-review compute
   ./oci-tenancy-review compute block-storage limits
@@ -1098,94 +1105,19 @@ merge_storage_regions() {
   log "Done. ${total} disks."
 }
 
-build_limits_region() {
-  local region="$1"
-  local out_dir
-  local compute_region_json
-  local storage_region_json
-  local rows_jsonl
-  local values_file
-  local prefixes_file
-  init_report_dirs
-  require_tenancy
-  [[ -n "$region" ]] || fatal "Region is required"
-  out_dir="report/limits/regions/${region}"
-  compute_region_json="report/compute/regions/${region}/compute_instances.json"
-  storage_region_json="report/storage/regions/${region}/storage_inventory_enriched.json"
-  [[ -s "$compute_region_json" ]] || fatal "Missing region compute artifact: $compute_region_json"
-  [[ -s "$storage_region_json" ]] || fatal "Missing region storage artifact: $storage_region_json"
-  mkdir -p "$out_dir"
-
-  rows_jsonl="${out_dir}/limits_rows.jsonl"
-  > "$rows_jsonl"
-  local service_name
-  for service_name in compute block-storage object-storage; do
-    values_file="${out_dir}/.values_${region}_${service_name}.json"
-    prefixes_file="${out_dir}/.prefixes_${region}.txt"
-    if [[ "$service_name" == "compute" ]]; then
-      build_region_limit_prefixes "$region" "$prefixes_file" "$compute_region_json"
-      [[ -s "$prefixes_file" ]] || continue
-    fi
-    oci_cli limits value list --compartment-id "$TENANCY_OCID" --service-name "$service_name" --all --region "$region" --output json > "$values_file"
-    while IFS=$'\t' read -r limit_name scope_type ad_name limit_value; do
-      [[ -n "$limit_name" ]] || continue
-      # OCI object-storage limits can return REGION-scoped values in availability-domain with empty value.
-      # Normalize to our CSV schema: availability-domain empty, limit-value populated.
-      if [[ "$scope_type" != "AD" ]] && [[ -z "$limit_value" ]] && [[ "$ad_name" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        limit_value="$ad_name"
-        ad_name=""
-      fi
-      if [[ "$service_name" == "compute" ]] && ! limit_matches_prefixes "$limit_name" "$prefixes_file"; then
-        continue
-      fi
-      local ra_json used_val="" avail_val=""
-      if [[ "$scope_type" == "AD" && -n "$ad_name" && "$ad_name" != "null" ]]; then
-        if ra_json="$(oci_cli limits resource-availability get --compartment-id "$TENANCY_OCID" --service-name "$service_name" --limit-name "$limit_name" --availability-domain "$ad_name" --region "$region" --output json 2>/dev/null)"; then
-          used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
-          avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
-        fi
-      else
-        if ra_json="$(oci_cli limits resource-availability get --compartment-id "$TENANCY_OCID" --service-name "$service_name" --limit-name "$limit_name" --region "$region" --output json 2>/dev/null)"; then
-          used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
-          avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
-        fi
-      fi
-      jq -cn --arg region "$region" --arg service "$service_name" --arg limit "$limit_name" --arg scope "$scope_type" --arg ad "$ad_name" --arg value "$limit_value" --arg used "$used_val" --arg avail "$avail_val" '{region: $region, serviceName: $service, limitName: $limit, scopeType: $scope, availabilityDomain: $ad, limitValue: $value, used: $used, available: $avail}' >> "$rows_jsonl"
-    done < <(jq -r '.data[]? | [(.name // ""), (."scope-type" // .scopeType // ""), (."availability-domain" // .availabilityDomain // ""), (.value // "")] | @tsv' "$values_file")
-    rm -f "$values_file" "$prefixes_file"
-  done
-
-  jq -s 'def to_num: if . == null or . == "" then null else (try (tonumber) catch null) end; def pct($u; $l): if $u == null or $l == null or $l == 0 then null else (($u / $l) * 100) end; map(. as $r | ($r.limitValue | to_num) as $limit | ($r.used | to_num) as $used | ($r.available | to_num) as $avail | (pct($used; $limit)) as $pct | {region: $r.region, serviceName: $r.serviceName, limitName: $r.limitName, scopeType: $r.scopeType, availabilityDomain: $r.availabilityDomain, limitValue: $limit, used: $used, available: $avail, usagePercent: $pct, id: ($r.region + ":" + $r.serviceName + ":" + ($r.scopeType // "") + ":" + ($r.availabilityDomain // "") + ":" + $r.limitName)}) | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)' "$rows_jsonl" > "${out_dir}/service_limits.json"
-  jq -r '["region","service-name","limit-name","scope-type","availability-domain","limit-value","used","available","usage-percent","id"], (.[] | [.region,.serviceName,.limitName,.scopeType,.availabilityDomain,.limitValue,.used,.available,.usagePercent,.id]) | @csv' "${out_dir}/service_limits.json" > "${out_dir}/service_limits.csv"
-  verbose "wrote region artifact dir '${out_dir}'"
-  local total
-  total="$(tail -n +2 "${out_dir}/service_limits.csv" | wc -l | tr -d ' ')"
-  verbose "Done. ${total} limits in ${region}."
+limit_service_slug() {
+  local service_name="$1"
+  case "$service_name" in
+    compute) echo "compute" ;;
+    block-storage) echo "block_storage" ;;
+    object-storage) echo "object_storage" ;;
+    *) fatal "Unsupported limits service: $service_name" ;;
+  esac
 }
 
-merge_limits_regions() {
-  init_report_dirs
-  ensure_target_regions
-  local -a regions json_files
-  local region f
-  regions=()
-  json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
-
-  for region in "${regions[@]}"; do
-    f="report/limits/regions/${region}/service_limits.json"
-    [[ -s "$f" ]] || fatal "Missing region limits artifact: $f"
-    json_files+=("$f")
-  done
-
-  jq -s '
-    [.[][]]
-    | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)
-  ' "${json_files[@]}" > report/limits/service_limits.json
-  verbose "wrote 'report/limits/service_limits.json'"
-
+merge_limits_json_to_csv() {
+  local json_file="$1"
+  local csv_file="$2"
   jq -r '
     [
       "region",
@@ -1214,31 +1146,206 @@ merge_limits_regions() {
         .id
       ]
     ) | @csv
-  ' report/limits/service_limits.json > report/limits/service_limits.csv
+  ' "$json_file" > "$csv_file"
+}
+
+build_limits_region_service() {
+  local region="$1"
+  local service_name="$2"
+  local out_dir
+  local compute_region_json
+  local rows_jsonl
+  local values_file
+  local prefixes_file
+  local slug
+  init_report_dirs
+  require_tenancy
+  [[ -n "$region" ]] || fatal "Region is required"
+  [[ -n "$service_name" ]] || fatal "Service name is required"
+  out_dir="report/limits/regions/${region}"
+  mkdir -p "$out_dir"
+
+  slug="$(limit_service_slug "$service_name")"
+  rows_jsonl="${out_dir}/limits_rows_${slug}.jsonl"
+  values_file="${out_dir}/.values_${region}_${service_name}.json"
+  prefixes_file="${out_dir}/.prefixes_${region}_${slug}.txt"
+  compute_region_json="report/compute/regions/${region}/compute_instances.json"
+  > "$rows_jsonl"
+
+  if [[ "$service_name" == "compute" ]]; then
+    [[ -s "$compute_region_json" ]] || { echo "[]" > "${out_dir}/${slug}_limits.json"; merge_limits_json_to_csv "${out_dir}/${slug}_limits.json" "${out_dir}/${slug}_limits.csv"; return 0; }
+    build_region_limit_prefixes "$region" "$prefixes_file" "$compute_region_json"
+    [[ -s "$prefixes_file" ]] || { echo "[]" > "${out_dir}/${slug}_limits.json"; merge_limits_json_to_csv "${out_dir}/${slug}_limits.json" "${out_dir}/${slug}_limits.csv"; return 0; }
+  fi
+
+  oci_cli limits value list --compartment-id "$TENANCY_OCID" --service-name "$service_name" --all --region "$region" --output json > "$values_file"
+  while IFS=$'\t' read -r limit_name scope_type ad_name limit_value; do
+    [[ -n "$limit_name" ]] || continue
+    # OCI object-storage limits can return REGION-scoped values in availability-domain with empty value.
+    # Normalize to our CSV schema: availability-domain empty, limit-value populated.
+    if [[ "$scope_type" != "AD" ]] && [[ -z "$limit_value" ]] && [[ "$ad_name" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      limit_value="$ad_name"
+      ad_name=""
+    fi
+    if [[ "$service_name" == "compute" ]] && ! limit_matches_prefixes "$limit_name" "$prefixes_file"; then
+      continue
+    fi
+    local ra_json used_val="" avail_val=""
+    if [[ "$scope_type" == "AD" && -n "$ad_name" && "$ad_name" != "null" ]]; then
+      if ra_json="$(oci_cli limits resource-availability get --compartment-id "$TENANCY_OCID" --service-name "$service_name" --limit-name "$limit_name" --availability-domain "$ad_name" --region "$region" --output json 2>/dev/null)"; then
+        used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
+        avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
+      fi
+    else
+      if ra_json="$(oci_cli limits resource-availability get --compartment-id "$TENANCY_OCID" --service-name "$service_name" --limit-name "$limit_name" --region "$region" --output json 2>/dev/null)"; then
+        used_val="$(echo "$ra_json" | jq -r '.data.used // .data.currentUsage // empty')"
+        avail_val="$(echo "$ra_json" | jq -r '.data.available // .data.availableAmount // empty')"
+      fi
+    fi
+    jq -cn --arg region "$region" --arg service "$service_name" --arg limit "$limit_name" --arg scope "$scope_type" --arg ad "$ad_name" --arg value "$limit_value" --arg used "$used_val" --arg avail "$avail_val" '{region: $region, serviceName: $service, limitName: $limit, scopeType: $scope, availabilityDomain: $ad, limitValue: $value, used: $used, available: $avail}' >> "$rows_jsonl"
+  done < <(jq -r '.data[]? | [(.name // ""), (."scope-type" // .scopeType // ""), (."availability-domain" // .availabilityDomain // ""), (.value // "")] | @tsv' "$values_file")
+
+  jq -s 'def to_num: if . == null or . == "" then null else (try (tonumber) catch null) end; def pct($u; $l): if $u == null or $l == null or $l == 0 then null else (($u / $l) * 100) end; map(. as $r | ($r.limitValue | to_num) as $limit | ($r.used | to_num) as $used | ($r.available | to_num) as $avail | (pct($used; $limit)) as $pct | {region: $r.region, serviceName: $r.serviceName, limitName: $r.limitName, scopeType: $r.scopeType, availabilityDomain: $r.availabilityDomain, limitValue: $limit, used: $used, available: $avail, usagePercent: $pct, id: ($r.region + ":" + $r.serviceName + ":" + ($r.scopeType // "") + ":" + ($r.availabilityDomain // "") + ":" + $r.limitName)}) | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)' "$rows_jsonl" > "${out_dir}/${slug}_limits.json"
+  merge_limits_json_to_csv "${out_dir}/${slug}_limits.json" "${out_dir}/${slug}_limits.csv"
+  rm -f "$rows_jsonl" "$values_file" "$prefixes_file"
+}
+
+merge_limits_region_all_services() {
+  local region="$1"
+  local out_dir
+  out_dir="report/limits/regions/${region}"
+  local -a json_files
+  local f
+  json_files=()
+  for f in "${out_dir}/compute_limits.json" "${out_dir}/block_storage_limits.json" "${out_dir}/object_storage_limits.json"; do
+    [[ -s "$f" ]] && json_files+=("$f")
+  done
+  if [[ "${#json_files[@]}" -eq 0 ]]; then
+    echo "[]" > "${out_dir}/service_limits.json"
+  else
+    jq -s '[.[][]] | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)' "${json_files[@]}" > "${out_dir}/service_limits.json"
+  fi
+  merge_limits_json_to_csv "${out_dir}/service_limits.json" "${out_dir}/service_limits.csv"
+}
+
+build_limits_region() {
+  local region="$1"
+  local service_scope="${2:-all}"
+  init_report_dirs
+  require_tenancy
+  [[ -n "$region" ]] || fatal "Region is required"
+  case "$service_scope" in
+    all|"")
+      build_limits_region_service "$region" "compute"
+      build_limits_region_service "$region" "block-storage"
+      build_limits_region_service "$region" "object-storage"
+      ;;
+    compute|block-storage|object-storage)
+      build_limits_region_service "$region" "$service_scope"
+      ;;
+    *)
+      fatal "Invalid limits service scope: $service_scope"
+      ;;
+  esac
+  merge_limits_region_all_services "$region"
+  local total
+  total="$(tail -n +2 "report/limits/regions/${region}/service_limits.csv" | wc -l | tr -d ' ')"
+  verbose "Done. ${total} limits in ${region}."
+}
+
+merge_limits_regions_by_service() {
+  local service_name="$1"
+  local slug
+  local -a regions json_files
+  local region f
+  init_report_dirs
+  ensure_target_regions
+  slug="$(limit_service_slug "$service_name")"
+  regions=()
+  json_files=()
+  while IFS= read -r region; do
+    [[ -n "$region" ]] && regions+=("$region")
+  done < <(resolve_target_regions)
+  for region in "${regions[@]}"; do
+    f="report/limits/regions/${region}/${slug}_limits.json"
+    [[ -s "$f" ]] || fatal "Missing region limits artifact: $f"
+    json_files+=("$f")
+  done
+  jq -s '[.[][]] | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)' "${json_files[@]}" > "report/limits/${slug}_limits.json"
+  merge_limits_json_to_csv "report/limits/${slug}_limits.json" "report/limits/${slug}_limits.csv"
+}
+
+merge_limits_regions() {
+  init_report_dirs
+  local -a json_files
+  local f
+  json_files=()
+  for f in report/limits/compute_limits.json report/limits/block_storage_limits.json report/limits/object_storage_limits.json; do
+    [[ -s "$f" ]] && json_files+=("$f")
+  done
+  if [[ "${#json_files[@]}" -eq 0 ]]; then
+    echo "[]" > report/limits/service_limits.json
+  else
+    jq -s '[.[][]] | sort_by(-( .usagePercent // -1 ), .region, .serviceName, .limitName)' "${json_files[@]}" > report/limits/service_limits.json
+  fi
+  verbose "wrote 'report/limits/service_limits.json'"
+  merge_limits_json_to_csv report/limits/service_limits.json report/limits/service_limits.csv
   verbose "wrote 'report/limits/service_limits.csv'"
   local total
   total="$(tail -n +2 report/limits/service_limits.csv | wc -l | tr -d ' ')"
   log "Done. ${total} limits."
 }
 
-build_limits() {
+ensure_object_storage_inventory() {
+  [[ -s report/object-storage/buckets_inventory.json ]] || build_object_storage
+}
+
+build_compute_limits() {
   init_report_dirs
   require_tenancy
   ensure_target_regions
   ensure_compute_inventory
-  ensure_storage_inventory
-
   local region
   while IFS= read -r region; do
     [[ -n "$region" ]] || continue
-    if [[ ! -s "report/compute/regions/${region}/compute_instances.json" ]]; then
-      build_compute_region "$region"
-    fi
-    if [[ ! -s "report/storage/regions/${region}/storage_inventory_enriched.json" ]]; then
-      build_storage_region "$region"
-    fi
-    build_limits_region "$region"
+    [[ -s "report/compute/regions/${region}/compute_instances.json" ]] || build_compute_region "$region"
+    build_limits_region "$region" "compute"
   done < <(resolve_target_regions)
+  merge_limits_regions_by_service "compute"
+}
+
+build_block_storage_limits() {
+  init_report_dirs
+  require_tenancy
+  ensure_target_regions
+  ensure_storage_inventory
+  local region
+  while IFS= read -r region; do
+    [[ -n "$region" ]] || continue
+    [[ -s "report/storage/regions/${region}/storage_inventory_enriched.json" ]] || build_storage_region "$region"
+    build_limits_region "$region" "block-storage"
+  done < <(resolve_target_regions)
+  merge_limits_regions_by_service "block-storage"
+}
+
+build_object_storage_limits() {
+  init_report_dirs
+  require_tenancy
+  ensure_target_regions
+  ensure_object_storage_inventory
+  local region
+  while IFS= read -r region; do
+    [[ -n "$region" ]] || continue
+    [[ -s "report/object-storage/regions/${region}/buckets_inventory.json" ]] || build_object_storage_region "$region"
+    build_limits_region "$region" "object-storage"
+  done < <(resolve_target_regions)
+  merge_limits_regions_by_service "object-storage"
+}
+
+build_limits() {
+  build_compute_limits
+  build_block_storage_limits
+  build_object_storage_limits
   merge_limits_regions
 }
 
@@ -1426,7 +1533,7 @@ build_object_storage() {
 
 is_make_routed_target() {
   case "$1" in
-    all|regions|compartments|policies|compute|block-storage|object-storage|limits)
+    all|regions|compartments|policies|compute|block-storage|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits)
       return 0
       ;;
     *)
@@ -1498,7 +1605,7 @@ main() {
       return
     fi
   elif [[ "${#positional[@]}" -gt 1 ]] && is_make_routed_target "${positional[0]}"; then
-    fatal "Invalid make target list: ${positional[*]}. Valid make-routed targets are: all regions compartments policies compute block-storage object-storage limits"
+    fatal "Invalid make target list: ${positional[*]}. Valid make-routed targets are: all regions compartments policies compute block-storage object-storage compute-limits block-storage-limits object-storage-limits limits"
   fi
 
   cmd="${positional[0]}"
@@ -1585,10 +1692,25 @@ main() {
       ;;
     limits-region)
       [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for limits-region"
-      build_limits_region "${cmd_args[0]}"
+      build_limits_region "${cmd_args[0]}" "${cmd_args[1]:-all}"
+      ;;
+    compute-limits)
+      build_compute_limits
+      ;;
+    block-storage-limits)
+      build_block_storage_limits
+      ;;
+    object-storage-limits)
+      build_object_storage_limits
       ;;
     limits-merge)
-      merge_limits_regions
+      if [[ "${#cmd_args[@]}" -eq 0 ]] || [[ "${cmd_args[0]}" == "all" ]]; then
+        merge_limits_regions
+      elif [[ "${cmd_args[0]}" == "compute" ]] || [[ "${cmd_args[0]}" == "block-storage" ]] || [[ "${cmd_args[0]}" == "object-storage" ]]; then
+        merge_limits_regions_by_service "${cmd_args[0]}"
+      else
+        fatal "Usage: limits-merge [all|compute|block-storage|object-storage]"
+      fi
       ;;
     help|-h|--help)
       usage

@@ -21,6 +21,9 @@ We focus on **speed by concurrently scraping specific OCI domains** (e.g. comput
     - [`report/compute/compute_shapes_summary.csv`](#reportcomputecompute_shapes_summarycsv)
     - [`report/storage/storage_inventory.csv`](#reportstoragestorage_inventorycsv)
     - [`report/object-storage/buckets_inventory.csv`](#reportobject-storagebuckets_inventorycsv)
+    - [`report/limits/compute_limits.csv`](#reportlimitscompute_limitscsv)
+    - [`report/limits/block_storage_limits.csv`](#reportlimitsblock_storage_limitscsv)
+    - [`report/limits/object_storage_limits.csv`](#reportlimitsobject_storage_limitscsv)
     - [`report/limits/service_limits.csv`](#reportlimitsservice_limitscsv)
     - [Per-Region Reports](#per-region-reports)
   - [Tests](#tests)
@@ -182,6 +185,15 @@ export BLACKLISTED_REGIONS="eu-amsterdam-1"
 
 # Build compute + block-storage + object-storage limits posture CSV at report/limits/
 ./oci-tenancy-review limits
+
+# Build compute-only limits CSV at report/limits/compute_limits.csv
+./oci-tenancy-review compute-limits
+
+# Build block-storage-only limits CSV at report/limits/block_storage_limits.csv
+./oci-tenancy-review block-storage-limits
+
+# Build object-storage-only limits CSV at report/limits/object_storage_limits.csv
+./oci-tenancy-review object-storage-limits
 
 # Build limits posture for one region at report/limits/regions/<region>/
 ./oci-tenancy-review limits-region eu-frankfurt-1
@@ -365,6 +377,18 @@ CSV header:
 
 Rows are ordered by `usage-percent` descending, then region/service/limit.
 This report currently focuses on compute, block-storage, and object-storage service limits.
+
+### `report/limits/compute_limits.csv`
+
+Same schema as `service_limits.csv`, scoped to `service-name=compute`.
+
+### `report/limits/block_storage_limits.csv`
+
+Same schema as `service_limits.csv`, scoped to `service-name=block-storage`.
+
+### `report/limits/object_storage_limits.csv`
+
+Same schema as `service_limits.csv`, scoped to `service-name=object-storage`.
 
 ### Per-Region Reports
 

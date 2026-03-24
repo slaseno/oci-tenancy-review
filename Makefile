@@ -9,7 +9,7 @@ SHELL := /bin/bash
 SCRIPT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/oci-tenancy-review
 SELF_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 
-all: regions compartments compute block-storage object-storage limits policies
+all: regions compartments compute block-storage object-storage compute-limits block-storage-limits object-storage-limits limits policies
 
 compartments:
 	@$(SCRIPT) _compartments
@@ -70,18 +70,33 @@ object-storage-compartment-%:
 	@stem="$*"; region="$${stem%%___CID___*}"; rest="$${stem#*___CID___}"; cid="$${rest%%___NS___*}"; namespace="$${rest#*___NS___}"; \
 	$(SCRIPT) _object-storage-compartment "$$region" "$$cid" "report/object-storage/regions/$$region/compartments/$$cid.jsonl" "$$namespace"
 
-limits: compute block-storage
-	@regions="$$(awk 'NF {print "limits-region-"$$0}' report/regions.txt)"; \
+compute-limits: compute
+	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___compute"}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
+	@$(SCRIPT) limits-merge compute
+
+block-storage-limits: block-storage
+	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___block-storage"}' report/regions.txt)"; \
+	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
+	@$(SCRIPT) limits-merge block-storage
+
+object-storage-limits: object-storage
+	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___object-storage"}' report/regions.txt)"; \
+	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
+	@$(SCRIPT) limits-merge object-storage
+
+limits: compute-limits block-storage-limits object-storage-limits
 	@$(SCRIPT) limits-merge
 
 limits-region-%:
-	@$(SCRIPT) limits-region $*
+	@stem="$*"; region="$${stem%%___SVC___*}"; svc="$${stem#*___SVC___}"; \
+	if [[ "$$svc" == "$$stem" ]]; then svc="all"; fi; \
+	$(SCRIPT) limits-region "$$region" "$$svc"
 
 regions:
 	@$(SCRIPT) _regions
 
-.PHONY: all policies compute block-storage limits \
+.PHONY: all policies compute block-storage limits compute-limits block-storage-limits object-storage-limits \
 	object-storage \
 	policy-compartment-% compute-region-% compute-compartment-% \
 	block-storage-region-% block-storage-compartment-% \

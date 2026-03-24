@@ -587,6 +587,9 @@ teardown() {
   run "$SCRIPT_PATH" limits
   [ "$status" -eq 0 ]
   [ -f report/limits/service_limits.csv ]
+  [ -f report/limits/compute_limits.csv ]
+  [ -f report/limits/block_storage_limits.csv ]
+  [ -f report/limits/object_storage_limits.csv ]
 
   run cat report/limits/service_limits.csv
   [ "$status" -eq 0 ]
@@ -750,7 +753,7 @@ EOF
 
   run make -pn all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"all: regions compartments compute block-storage object-storage limits policies"* ]]
+  [[ "$output" == *"all: regions compartments compute block-storage object-storage compute-limits block-storage-limits object-storage-limits limits policies"* ]]
   [[ "$output" == *"policies: compartments"* ]]
   [[ "$output" == *"compute: compartments regions"* ]]
   [[ "$output" == *"compute-region-%:"* ]]
@@ -758,6 +761,9 @@ EOF
   [[ "$output" == *"block-storage-region-%:"* ]]
   [[ "$output" == *"object-storage: compartments regions"* ]]
   [[ "$output" == *"object-storage-region-%:"* ]]
-  [[ "$output" == *"limits: compute block-storage"* ]]
+  [[ "$output" == *"compute-limits: compute"* ]]
+  [[ "$output" == *"block-storage-limits: block-storage"* ]]
+  [[ "$output" == *"object-storage-limits: object-storage"* ]]
+  [[ "$output" == *"limits: compute-limits block-storage-limits object-storage-limits"* ]]
   [[ "$output" == *"limits-region-%:"* ]]
 }
