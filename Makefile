@@ -1,4 +1,4 @@
-# This Makefile is used to enable concurrent job execution (-j 8) by a fan-out mechanism on regions -> compartment level. 
+# This Makefile is used to enable concurrent job execution (-j 4) by a fan-out mechanism on regions -> compartment level. 
 # Default target when running `make` without arguments.
 .DEFAULT_GOAL := all
 

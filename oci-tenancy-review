@@ -42,7 +42,7 @@ Note:
   Command 'all' is always orchestrated through Make.
   Parallel workflow commands (policies, compute, block-storage, object-storage, compute-limits, block-storage-limits, object-storage-limits, limits)
   are orchestrated through Make when a local Makefile is present.
-  Default MAKEFLAGS when unset: -j 8
+  Default MAKEFLAGS when unset: -j 4
 
 Required environment:
   TENANCY_OCID   Tenancy OCID (ocid1.tenancy...)
@@ -1546,7 +1546,7 @@ run_make_targets() {
   local makefile_path
   local effective_makeflags
   makefile_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/Makefile"
-  effective_makeflags="${MAKEFLAGS:--j 8 --no-print-directory}"
+  effective_makeflags="${MAKEFLAGS:--j 4 --no-print-directory}"
   require_cmd make
   [[ -f "$makefile_path" ]] || fatal "Missing Makefile: $makefile_path"
   log "MAKEFLAGS='${effective_makeflags}' make $*"
