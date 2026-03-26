@@ -38,7 +38,8 @@ If running in OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/C
 For local runs, ensure the following is installed and configured:
 * [jq](https://github.com/jqlang/jq)
 * [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cliconcepts.htm)
-* UNIX tooling like `bash`, GNU `make`, `awk`, `sort`
+* UNIX tooling like `bash`, `awk`, `sort`
+* (Optional, advanced) GNU `make` for parallel fan-out and cached top-level CSV targets
 
 ## Setup
 
@@ -115,7 +116,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ## Usage
 
 ```bash
-# Run all reports
+# Run all reports (serial, self-contained)
 ./oci-tenancy-review all
 
 # Your reports are now available in the report subfolder
@@ -130,6 +131,23 @@ oci-tenancy-review/report.tar.gz
 ```
 
 Now inspect all .csv files in that archive.
+
+---
+
+### Advanced: parallel fan-out + cached CSV outputs via Make
+
+For larger tenancies or repeated runs, use `make` to execute region/compartment fan-out concurrently and cache top-level CSV outputs.
+
+```bash
+# Build all top-level CSVs (cached by file timestamps)
+make -j 4 all
+
+# Build selected artifacts
+make -j 4 report/compute/compute_instances.csv
+make -j 4 report/limits/service_limits.csv
+```
+
+`make` invalidates cached outputs automatically when `Makefile` or `oci-tenancy-review` changes.
 
 ---
 

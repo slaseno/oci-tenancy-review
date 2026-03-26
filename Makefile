@@ -1,5 +1,5 @@
-# This Makefile is used to enable concurrent job execution (-j 4) by a fan-out mechanism on regions -> compartment level. 
-# Default target when running `make` without arguments.
+# This Makefile is used to enable concurrent job execution (-j 4) by a fan-out mechanism on regions -> compartment level.
+# Native Make file targets are used for caching top-level artifacts.
 .DEFAULT_GOAL := all
 
 SHELL := /bin/bash
@@ -8,13 +8,34 @@ SHELL := /bin/bash
 
 SCRIPT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/oci-tenancy-review
 SELF_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+REBUILD_DEPS := $(SCRIPT) $(SELF_MAKEFILE)
 
-all: regions compartments compute block-storage base-database object-storage compute-limits block-storage-limits object-storage-limits limits policies
+all: \
+	report/compartments.csv \
+	report/policies/policy_statements.csv \
+	report/compute/compute_instances.csv \
+	report/compute/compute_shapes_summary.csv \
+	report/storage/storage_inventory.csv \
+	report/base-database/base_databases.csv \
+	report/object-storage/buckets_inventory.csv \
+	report/limits/compute_limits.csv \
+	report/limits/block_storage_limits.csv \
+	report/limits/object_storage_limits.csv \
+	report/limits/service_limits.csv
 
-compartments:
+regions: report/regions.txt
+
+report/regions.txt: $(REBUILD_DEPS)
+	@$(SCRIPT) _regions
+
+compartments: report/compartments.csv
+
+report/compartments.csv: $(REBUILD_DEPS)
 	@$(SCRIPT) _compartments
 
-policies: compartments
+policies: report/policies/policy_statements.csv
+
+report/policies/policy_statements.csv: report/compartments.csv $(REBUILD_DEPS)
 	@$(SCRIPT) policies-prepare
 	@targets="$$(awk 'NF {print "policy-compartment-"$$1}' report/policies/.policy_cids.txt)"; \
 	if [[ -n "$$targets" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$targets; fi
@@ -23,10 +44,16 @@ policies: compartments
 policy-compartment-%:
 	@cid="$*"; $(SCRIPT) _policy-compartment "$$cid" "report/policies/compartments/$$cid.jsonl"
 
-compute: compartments regions
+compute: report/compute/compute_instances.csv report/compute/compute_shapes_summary.csv
+
+report/compute/compute_instances.csv: report/compartments.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "compute-region-"$$0}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) compute-merge
+
+# compute-merge emits both files; if summary is missing, rebuild from existing region artifacts.
+report/compute/compute_shapes_summary.csv: report/compute/compute_instances.csv
+	@[[ -s "$@" ]] || $(SCRIPT) compute-merge
 
 compute-region-%:
 	@$(SCRIPT) compute-region-prepare $*
@@ -38,7 +65,9 @@ compute-compartment-%:
 	@stem="$*"; region="$${stem%%___CID___*}"; cid="$${stem#*___CID___}"; \
 	$(SCRIPT) _compute-compartment "$$region" "$$cid" "report/compute/regions/$$region/compartments/$$cid.jsonl"
 
-block-storage: compartments regions
+block-storage: report/storage/storage_inventory.csv
+
+report/storage/storage_inventory.csv: report/compartments.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "block-storage-region-"$$0}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) block-storage-merge
@@ -53,7 +82,9 @@ block-storage-compartment-%:
 	@stem="$*"; region="$${stem%%___CID___*}"; cid="$${stem#*___CID___}"; \
 	$(SCRIPT) _storage-compartment "$$region" "$$cid" "report/storage/regions/$$region/compartments/$$cid"
 
-base-database: compartments regions
+base-database: report/base-database/base_databases.csv
+
+report/base-database/base_databases.csv: report/compartments.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "base-database-region-"$$0}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) base-database-merge
@@ -68,7 +99,9 @@ base-database-compartment-%:
 	@stem="$*"; region="$${stem%%___CID___*}"; cid="$${stem#*___CID___}"; \
 	$(SCRIPT) _base-database-compartment "$$region" "$$cid" "report/base-database/regions/$$region/compartments/$$cid.jsonl"
 
-object-storage: compartments regions
+object-storage: report/object-storage/buckets_inventory.csv
+
+report/object-storage/buckets_inventory.csv: report/compartments.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "object-storage-region-"$$0}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) object-storage-merge
@@ -85,22 +118,30 @@ object-storage-compartment-%:
 	@stem="$*"; region="$${stem%%___CID___*}"; rest="$${stem#*___CID___}"; cid="$${rest%%___NS___*}"; namespace="$${rest#*___NS___}"; \
 	$(SCRIPT) _object-storage-compartment "$$region" "$$cid" "report/object-storage/regions/$$region/compartments/$$cid.jsonl" "$$namespace"
 
-compute-limits: compute
+compute-limits: report/limits/compute_limits.csv
+
+report/limits/compute_limits.csv: report/compute/compute_instances.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___compute"}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) limits-merge compute
 
-block-storage-limits: block-storage
+block-storage-limits: report/limits/block_storage_limits.csv
+
+report/limits/block_storage_limits.csv: report/storage/storage_inventory.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___block-storage"}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) limits-merge block-storage
 
-object-storage-limits: object-storage
+object-storage-limits: report/limits/object_storage_limits.csv
+
+report/limits/object_storage_limits.csv: report/object-storage/buckets_inventory.csv report/regions.txt $(REBUILD_DEPS)
 	@regions="$$(awk 'NF {print "limits-region-"$$0"___SVC___object-storage"}' report/regions.txt)"; \
 	if [[ -n "$$regions" ]]; then $(MAKE) -f "$(SELF_MAKEFILE)" $$regions; fi
 	@$(SCRIPT) limits-merge object-storage
 
-limits: compute-limits block-storage-limits object-storage-limits
+limits: report/limits/service_limits.csv
+
+report/limits/service_limits.csv: report/limits/compute_limits.csv report/limits/block_storage_limits.csv report/limits/object_storage_limits.csv $(REBUILD_DEPS)
 	@$(SCRIPT) limits-merge
 
 limits-region-%:
@@ -108,13 +149,9 @@ limits-region-%:
 	if [[ "$$svc" == "$$stem" ]]; then svc="all"; fi; \
 	$(SCRIPT) limits-region "$$region" "$$svc"
 
-regions:
-	@$(SCRIPT) _regions
-
-.PHONY: all policies compute block-storage base-database limits compute-limits block-storage-limits object-storage-limits \
-	object-storage \
+.PHONY: all regions compartments policies compute block-storage base-database limits \
+	compute-limits block-storage-limits object-storage-limits object-storage \
 	policy-compartment-% compute-region-% compute-compartment-% \
 	block-storage-region-% block-storage-compartment-% \
 	base-database-region-% base-database-compartment-% \
-	object-storage-region-% object-storage-compartment-% limits-region-% \
-	compartments regions _compartments _regions
+	object-storage-region-% object-storage-compartment-% limits-region-%

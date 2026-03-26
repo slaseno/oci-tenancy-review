@@ -42,10 +42,8 @@ Commands:
   help           Show this help
 
 Note:
-  Command 'all' is always orchestrated through Make.
-  Parallel workflow commands (policies, compute, block-storage, base-database, object-storage, compute-limits, block-storage-limits, object-storage-limits, limits)
-  are orchestrated through Make when a local Makefile is present.
-  Default MAKEFLAGS when unset: -j 4
+  Commands run serially in the order they are provided.
+  Advanced parallel/cached execution is available via the repository Makefile.
 
 Required environment:
   TENANCY_OCID   Tenancy OCID (ocid1.tenancy...)
@@ -1702,92 +1700,25 @@ build_object_storage() {
   merge_object_storage_regions
 }
 
-is_make_routed_target() {
-  case "$1" in
-    all|regions|compartments|policies|compute|block-storage|base-database|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+run_all_serial() {
+  build_compartments
+  build_policies
+  build_compute
+  build_storage
+  build_base_database
+  build_object_storage
+  build_limits
 }
 
-run_make_targets() {
-  local makefile_path
-  local effective_makeflags
-  makefile_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/Makefile"
-  effective_makeflags="${MAKEFLAGS:--j 4 --no-print-directory}"
-  require_cmd make
-  [[ -f "$makefile_path" ]] || fatal "Missing Makefile: $makefile_path"
-  log "MAKEFLAGS='${effective_makeflags}' make $*"
-  if [[ "$DEBUG_MODE" == "true" ]]; then
-    DEBUG=true command make -f "$makefile_path" $effective_makeflags "$@"
-  else
-    command make -f "$makefile_path" $effective_makeflags "$@"
-  fi
-}
-
-main() {
-  local cmd
-  local -a cmd_args
-  local -a positional
-  cmd_args=()
-  positional=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      help|-h|--help)
-        if [[ -z "$cmd" ]]; then
-          cmd="help"
-        else
-          fatal "Unknown option: $1"
-        fi
-        ;;
-      *)
-        positional+=("$1")
-        ;;
-    esac
-    shift
-  done
-
-  if [[ "${#positional[@]}" -eq 0 ]]; then
-    positional=("help")
-  fi
-
-  if [[ "${DEBUG:-false}" == "true" ]]; then
-    DEBUG_MODE="true"
-  fi
-
-  [[ "$DEBUG_MODE" == "true" ]] && set -x
-
-  local token
-  local all_make_routed="true"
-  for token in "${positional[@]}"; do
-    if ! is_make_routed_target "$token"; then
-      all_make_routed="false"
-      break
-    fi
-  done
-  if [[ "$all_make_routed" == "true" ]]; then
-    # Avoid make -> script -> make recursion for top-level targets invoked by Make recipes.
-    if [[ "${MAKELEVEL:-0}" -eq 0 ]]; then
-      run_make_targets "${positional[@]}"
-      return
-    fi
-  elif [[ "${#positional[@]}" -gt 1 ]] && is_make_routed_target "${positional[0]}"; then
-    fatal "Invalid make target list: ${positional[*]}. Valid make-routed targets are: all regions compartments policies compute block-storage base-database object-storage compute-limits block-storage-limits object-storage-limits limits"
-  fi
-
-  cmd="${positional[0]}"
-  cmd_args=("${positional[@]:1}")
-
-  require_cmd oci
-  require_cmd jq
-  require_cmd awk
-  require_cmd sort
+execute_command() {
+  local cmd="$1"
+  shift
+  local -a cmd_args=("$@")
 
   case "$cmd" in
+    all)
+      run_all_serial
+      ;;
     _regions)
       build_regions
       ;;
@@ -1815,15 +1746,15 @@ main() {
       build_object_storage_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}" "${cmd_args[3]}"
       ;;
     compute-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region <region>"
       build_compute_region "${cmd_args[0]}"
       ;;
     compute-region-prepare)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region-prepare"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region-prepare <region>"
       prepare_compute_region "${cmd_args[0]}"
       ;;
     compute-region-merge)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for compute-region-merge"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region-merge <region>"
       merge_compute_region "${cmd_args[0]}"
       ;;
     compute-merge)
@@ -1836,52 +1767,52 @@ main() {
       merge_policies
       ;;
     block-storage-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region <region>"
       build_storage_region "${cmd_args[0]}"
       ;;
     block-storage-region-prepare)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region-prepare"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region-prepare <region>"
       prepare_storage_region "${cmd_args[0]}"
       ;;
     block-storage-region-merge)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for block-storage-region-merge"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region-merge <region>"
       merge_storage_region "${cmd_args[0]}"
       ;;
     block-storage-merge)
       merge_storage_regions
       ;;
     base-database-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for base-database-region"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region <region>"
       build_base_database_region "${cmd_args[0]}"
       ;;
     base-database-region-prepare)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for base-database-region-prepare"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region-prepare <region>"
       prepare_base_database_region "${cmd_args[0]}"
       ;;
     base-database-region-merge)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for base-database-region-merge"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region-merge <region>"
       merge_base_database_region "${cmd_args[0]}"
       ;;
     base-database-merge)
       merge_base_database_regions
       ;;
     object-storage-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for object-storage-region"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region <region>"
       build_object_storage_region "${cmd_args[0]}"
       ;;
     object-storage-region-prepare)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for object-storage-region-prepare"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region-prepare <region>"
       prepare_object_storage_region "${cmd_args[0]}"
       ;;
     object-storage-region-merge)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for object-storage-region-merge"
+      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region-merge <region>"
       merge_object_storage_region "${cmd_args[0]}"
       ;;
     object-storage-merge)
       merge_object_storage_regions
       ;;
     limits-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Region argument required for limits-region"
+      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
       build_limits_region "${cmd_args[0]}" "${cmd_args[1]:-all}"
       ;;
     compute-limits)
@@ -1902,6 +1833,30 @@ main() {
         fatal "Usage: limits-merge [all|compute|block-storage|object-storage]"
       fi
       ;;
+    regions)
+      build_regions
+      ;;
+    compartments)
+      build_compartments
+      ;;
+    policies)
+      build_policies
+      ;;
+    compute)
+      build_compute
+      ;;
+    block-storage)
+      build_storage
+      ;;
+    base-database)
+      build_base_database
+      ;;
+    object-storage)
+      build_object_storage
+      ;;
+    limits)
+      build_limits
+      ;;
     help|-h|--help)
       usage
       ;;
@@ -1909,6 +1864,108 @@ main() {
       fatal "Unknown command: $cmd"
       ;;
   esac
+}
+
+run_commands_serially() {
+  local -a positional=("$@")
+  local i=0
+  local cmd
+  local region
+  local service_scope
+
+  while [[ $i -lt ${#positional[@]} ]]; do
+    cmd="${positional[$i]}"
+    i=$((i + 1))
+
+    case "$cmd" in
+      help|-h|--help|all|regions|compartments|policies|compute|block-storage|base-database|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits|compute-merge|policies-prepare|policies-merge|block-storage-merge|base-database-merge|object-storage-merge)
+        execute_command "$cmd"
+        ;;
+      compute-region|compute-region-prepare|compute-region-merge|block-storage-region|block-storage-region-prepare|block-storage-region-merge|base-database-region|base-database-region-prepare|base-database-region-merge|object-storage-region|object-storage-region-prepare|object-storage-region-merge)
+        [[ $i -lt ${#positional[@]} ]] || fatal "Usage: ${cmd} <region>"
+        execute_command "$cmd" "${positional[$i]}"
+        i=$((i + 1))
+        ;;
+      limits-region)
+        [[ $i -lt ${#positional[@]} ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
+        region="${positional[$i]}"
+        i=$((i + 1))
+        service_scope="all"
+        if [[ $i -lt ${#positional[@]} ]]; then
+          case "${positional[$i]}" in
+            all|compute|block-storage|object-storage)
+              service_scope="${positional[$i]}"
+              i=$((i + 1))
+              ;;
+          esac
+        fi
+        execute_command "$cmd" "$region" "$service_scope"
+        ;;
+      limits-merge)
+        service_scope="all"
+        if [[ $i -lt ${#positional[@]} ]]; then
+          case "${positional[$i]}" in
+            all|compute|block-storage|object-storage)
+              service_scope="${positional[$i]}"
+              i=$((i + 1))
+              ;;
+          esac
+        fi
+        execute_command "$cmd" "$service_scope"
+        ;;
+      _regions|_compartments)
+        execute_command "$cmd"
+        ;;
+      _policy-compartment)
+        [[ $((i + 1)) -lt ${#positional[@]} ]] || fatal "Usage: _policy-compartment <compartment-ocid> <out-file>"
+        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}"
+        i=$((i + 2))
+        ;;
+      _compute-compartment|_storage-compartment|_base-database-compartment)
+        [[ $((i + 2)) -lt ${#positional[@]} ]] || fatal "Usage: ${cmd} <region> <compartment-ocid> <out-file-or-prefix>"
+        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}" "${positional[$((i + 2))]}"
+        i=$((i + 3))
+        ;;
+      _object-storage-compartment)
+        [[ $((i + 3)) -lt ${#positional[@]} ]] || fatal "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>"
+        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}" "${positional[$((i + 2))]}" "${positional[$((i + 3))]}"
+        i=$((i + 4))
+        ;;
+      *)
+        fatal "Unknown command: $cmd"
+        ;;
+    esac
+  done
+}
+
+main() {
+  local -a positional
+  positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      *)
+        positional+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "${#positional[@]}" -eq 0 ]]; then
+    positional=("help")
+  fi
+
+  if [[ "${DEBUG:-false}" == "true" ]]; then
+    DEBUG_MODE="true"
+  fi
+
+  [[ "$DEBUG_MODE" == "true" ]] && set -x
+
+  require_cmd oci
+  require_cmd jq
+  require_cmd awk
+  require_cmd sort
+  run_commands_serially "${positional[@]}"
 }
 
 main "$@"

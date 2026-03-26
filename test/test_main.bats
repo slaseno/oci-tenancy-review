@@ -821,6 +821,44 @@ EOF
   [[ "$output" == *"timed out"* ]]
 }
 
+@test "serial multi-command invocation works without make routing" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  export REGIONS="eu-frankfurt-1"
+
+  run "$SCRIPT_PATH" compute block-storage limits
+  [ "$status" -eq 0 ]
+  [ -f report/compute/compute_instances.csv ]
+  [ -f report/storage/storage_inventory.csv ]
+  [ -f report/limits/service_limits.csv ]
+}
+
+@test "all runs self-contained without make in PATH" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  PATH="$TMPDIR_TEST/bin:/usr/bin:/bin"
+
+  run "$SCRIPT_PATH" all
+  [ "$status" -eq 0 ]
+  [ -f report/compartments.csv ]
+  [ -f report/compute/compute_instances.csv ]
+  [ -f report/storage/storage_inventory.csv ]
+  [ -f report/base-database/base_databases.csv ]
+  [ -f report/object-storage/buckets_inventory.csv ]
+  [ -f report/limits/service_limits.csv ]
+  [ -f report/policies/policy_statements.csv ]
+}
+
+@test "help describes serial execution and advanced make usage externally" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+
+  run "$SCRIPT_PATH" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Commands run serially in the order they are provided."* ]]
+  [[ "$output" != *"always orchestrated through Make"* ]]
+}
+
 @test "make all declares dependency graph for parallel execution" {
   cd "$BATS_TEST_DIRNAME/.."
 
@@ -828,19 +866,26 @@ EOF
 
   run make -pn all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"all: regions compartments compute block-storage base-database object-storage compute-limits block-storage-limits object-storage-limits limits policies"* ]]
-  [[ "$output" == *"policies: compartments"* ]]
-  [[ "$output" == *"compute: compartments regions"* ]]
+  [[ "$output" == *"all: report/compartments.csv report/policies/policy_statements.csv report/compute/compute_instances.csv report/compute/compute_shapes_summary.csv report/storage/storage_inventory.csv report/base-database/base_databases.csv report/object-storage/buckets_inventory.csv report/limits/compute_limits.csv report/limits/block_storage_limits.csv report/limits/object_storage_limits.csv report/limits/service_limits.csv"* ]]
+  [[ "$output" == *"report/compartments.csv:"* ]]
+  [[ "$output" == *"report/regions.txt:"* ]]
+  [[ "$output" == *"report/policies/policy_statements.csv: report/compartments.csv"* ]]
+  [[ "$output" == *"report/policies/policy_statements.csv:"*"oci-tenancy-review Makefile"* ]]
+  [[ "$output" == *"compute: report/compute/compute_instances.csv report/compute/compute_shapes_summary.csv"* ]]
+  [[ "$output" == *"report/compute/compute_instances.csv: report/compartments.csv report/regions.txt"* ]]
+  [[ "$output" == *"report/compute/compute_instances.csv:"*"oci-tenancy-review Makefile"* ]]
   [[ "$output" == *"compute-region-%:"* ]]
-  [[ "$output" == *"block-storage: compartments regions"* ]]
+  [[ "$output" == *"block-storage: report/storage/storage_inventory.csv"* ]]
   [[ "$output" == *"block-storage-region-%:"* ]]
-  [[ "$output" == *"base-database: compartments regions"* ]]
+  [[ "$output" == *"base-database: report/base-database/base_databases.csv"* ]]
   [[ "$output" == *"base-database-region-%:"* ]]
-  [[ "$output" == *"object-storage: compartments regions"* ]]
+  [[ "$output" == *"object-storage: report/object-storage/buckets_inventory.csv"* ]]
   [[ "$output" == *"object-storage-region-%:"* ]]
-  [[ "$output" == *"compute-limits: compute"* ]]
-  [[ "$output" == *"block-storage-limits: block-storage"* ]]
-  [[ "$output" == *"object-storage-limits: object-storage"* ]]
-  [[ "$output" == *"limits: compute-limits block-storage-limits object-storage-limits"* ]]
+  [[ "$output" == *"compute-limits: report/limits/compute_limits.csv"* ]]
+  [[ "$output" == *"block-storage-limits: report/limits/block_storage_limits.csv"* ]]
+  [[ "$output" == *"object-storage-limits: report/limits/object_storage_limits.csv"* ]]
+  [[ "$output" == *"limits: report/limits/service_limits.csv"* ]]
+  [[ "$output" == *"report/limits/service_limits.csv: report/limits/compute_limits.csv report/limits/block_storage_limits.csv report/limits/object_storage_limits.csv"* ]]
+  [[ "$output" == *"report/limits/service_limits.csv:"*"oci-tenancy-review Makefile"* ]]
   [[ "$output" == *"limits-region-%:"* ]]
 }
