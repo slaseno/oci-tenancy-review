@@ -742,6 +742,15 @@ EOF
   [ -f report/compute/regions/eu-frankfurt-1/compute_instances.json ]
 }
 
+@test "internal makefile command compartments works" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+
+  run "$SCRIPT_PATH" compartments
+  [ "$status" -eq 0 ]
+  [ -f report/compartments.csv ]
+}
+
 @test "makefile defines compartment-level fanout patterns" {
   cd "$BATS_TEST_DIRNAME/.."
   run make -pn all

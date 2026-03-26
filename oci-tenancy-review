@@ -262,9 +262,7 @@ is_region_reachable() {
 filter_reachable_regions() {
   verbose "filter_reachable_regions processing"
   local region
-  local had_iterations="false"
   for region in "$@"; do
-    had_iterations="true"
     [[ -n "$region" ]] || continue
     if is_blacklisted_region "$region"; then
       warn "Skipping blacklisted region: $region"
@@ -276,7 +274,6 @@ filter_reachable_regions() {
       warn "Skipping unreachable region: $region"
     fi
   done
-  [[ "$had_iterations" == "true" ]] || true
 }
 
 resolve_target_regions() {
@@ -435,34 +432,17 @@ search() {
   for region in "${regions[@]}"; do
     page=""
     verbose "search '${query_text}' ${region:-default-region} processing"
-    local had_iterations="false"
     while true; do
-      had_iterations="true"
-      if [[ -n "$region" && -n "$page" ]]; then
-        oci_cli search resource structured-search \
-          --query-text "$query_text" \
-          --limit 1000 \
-          --page "$page" \
-          --region "$region" \
-          --output json > "$resp_file"
-      elif [[ -n "$region" ]]; then
-        oci_cli search resource structured-search \
-          --query-text "$query_text" \
-          --limit 1000 \
-          --region "$region" \
-          --output json > "$resp_file"
-      elif [[ -n "$page" ]]; then
-        oci_cli search resource structured-search \
-          --query-text "$query_text" \
-          --limit 1000 \
-          --page "$page" \
-          --output json > "$resp_file"
-      else
-        oci_cli search resource structured-search \
-          --query-text "$query_text" \
-          --limit 1000 \
-          --output json > "$resp_file"
-      fi
+      local -a args
+      args=(
+        search resource structured-search
+        --query-text "$query_text"
+        --limit 1000
+      )
+      [[ -n "$page" ]] && args+=(--page "$page")
+      [[ -n "$region" ]] && args+=(--region "$region")
+      args+=(--output json)
+      oci_cli "${args[@]}" > "$resp_file"
 
       jq -e '.' "$resp_file" >/dev/null 2>&1 || \
         fatal "Search query returned non-JSON output for: $query_text"
@@ -486,7 +466,6 @@ search() {
       page="$(jq -r '."opc-next-page" // empty' "$resp_file")"
       [[ -z "$page" ]] && break
     done
-    :
   done
 
   sort -u "$ids_file" -o "$ids_file"
@@ -531,7 +510,7 @@ prepare_policies() {
     "query policy resources" \
     "report/policies/policy_target_compartments.csv"
 
-  awk -F',' 'NR>1 && $1 != "" {print $1}' report/policies/policy_target_compartments.csv > report/policies/.policy_cids.txt
+  write_cids_from_targets_csv report/policies/policy_target_compartments.csv report/policies/.policy_cids.txt
   local total
   total="$(wc -l < report/policies/.policy_cids.txt | tr -d ' ')"
   log "Done. ${total} target compartments."
@@ -560,15 +539,8 @@ build_policy_compartment() {
 }
 
 merge_policies() {
-  local -a policy_parts
   mkdir -p report/policies/compartments
-  : > report/policies/policies_all_compartments.jsonl
-  shopt -s nullglob
-  policy_parts=(report/policies/compartments/*.jsonl)
-  shopt -u nullglob
-  if [[ "${#policy_parts[@]}" -gt 0 ]]; then
-    cat "${policy_parts[@]}" >> report/policies/policies_all_compartments.jsonl
-  fi
+  concat_compartment_parts report/policies/compartments "*.jsonl" report/policies/policies_all_compartments.jsonl
 
   jq -s '.' report/policies/policies_all_compartments.jsonl > report/policies/policies_all_compartments.json
   verbose "wrote 'report/policies/policies_all_compartments.json'"
@@ -623,10 +595,32 @@ ensure_target_regions() {
   [[ -s report/regions.txt ]] || build_regions
 }
 
-script_path() {
-  local dir
-  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  printf '%s/%s\n' "$dir" "$(basename "${BASH_SOURCE[0]}")"
+collect_target_regions_array() {
+  local region
+  TARGET_REGIONS=()
+  while IFS= read -r region; do
+    [[ -n "$region" ]] && TARGET_REGIONS+=("$region")
+  done < <(resolve_target_regions)
+}
+
+write_cids_from_targets_csv() {
+  local targets_file="$1"
+  local cid_file="$2"
+  awk -F',' 'NR>1 && $1 != "" {print $1}' "$targets_file" > "$cid_file"
+}
+
+concat_compartment_parts() {
+  local parts_dir="$1"
+  local suffix_pattern="$2"
+  local out_file="$3"
+  local -a part_files
+  : > "$out_file"
+  shopt -s nullglob
+  part_files=("${parts_dir}"/${suffix_pattern})
+  shopt -u nullglob
+  if [[ "${#part_files[@]}" -gt 0 ]]; then
+    cat "${part_files[@]}" >> "$out_file"
+  fi
 }
 
 build_compute_compartment_region() {
@@ -783,7 +777,7 @@ prepare_compute_region() {
   mkdir -p "${out_dir}/compartments"
   rm -f "${out_dir}/compartments/"*.jsonl
   search "query instance resources" "$region_target_file" "$region"
-  awk -F',' 'NR>1 && $1 != "" {print $1}' "$region_target_file" > "$cid_file"
+  write_cids_from_targets_csv "$region_target_file" "$cid_file"
   local total
   total="$(wc -l < "$cid_file" | tr -d ' ')"
   verbose "Done. ${total} target compartments for ${region}."
@@ -796,19 +790,12 @@ merge_compute_region() {
   local json_file
   local csv_file
   local shapes_file
-  local -a part_files
   out_dir="report/compute/regions/${region}"
   jsonl_file="${out_dir}/compute_instances.jsonl"
   json_file="${out_dir}/compute_instances.json"
   csv_file="${out_dir}/compute_instances.csv"
   shapes_file="${out_dir}/compute_shapes_summary.csv"
-  : > "$jsonl_file"
-  shopt -s nullglob
-  part_files=("${out_dir}/compartments/"*.jsonl)
-  shopt -u nullglob
-  if [[ "${#part_files[@]}" -gt 0 ]]; then
-    cat "${part_files[@]}" >> "$jsonl_file"
-  fi
+  concat_compartment_parts "${out_dir}/compartments" "*.jsonl" "$jsonl_file"
   jq -s '.' "$jsonl_file" > "$json_file"
   jq -r '
     ["compartment-id","compartment-path","region","instance-name","shape","ocpus","memory-in-gbs","baseline-ocpu-utilization","lifecycle-state","availability-domain","fault-domain","image-id","launch-mode","launch-boot-volume-type","launch-firmware","launch-remote-data-volume-type","source-type","capacity-reservation-id","dedicated-vm-host-id","time-maintenance-reboot-due","preemptible-action-type","availability-recovery-action","legacy-imds-endpoints-disabled","network-type","consistent-volume-naming-enabled","all-plugins-disabled","monitoring-disabled","management-disabled","live-migration-preferred","pv-encryption-in-transit-enabled","metadata-key-count","extended-metadata-key-count","platform-type","platform-secure-boot-enabled","platform-tpm-enabled","platform-measured-boot-enabled","platform-memory-encryption-enabled","freeform-tag-count","defined-tag-namespace-count","time-created","instance-id"],
@@ -827,15 +814,12 @@ merge_compute_region() {
 merge_compute_regions() {
   init_report_dirs
   ensure_target_regions
-  local -a regions json_files
+  local -a json_files
   local region f
-  regions=()
   json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
+  collect_target_regions_array
 
-  for region in "${regions[@]}"; do
+  for region in "${TARGET_REGIONS[@]}"; do
     f="report/compute/regions/${region}/compute_instances.json"
     [[ -s "$f" ]] || fatal "Missing region compute artifact: $f"
     json_files+=("$f")
@@ -846,7 +830,7 @@ merge_compute_regions() {
 
   {
     echo "compartment-id,compartment-path"
-    for region in "${regions[@]}"; do
+    for region in "${TARGET_REGIONS[@]}"; do
       if [[ -s "report/compute/regions/${region}/compute_target_compartments_${region}.csv" ]]; then
         tail -n +2 "report/compute/regions/${region}/compute_target_compartments_${region}.csv"
       fi
@@ -912,7 +896,7 @@ prepare_storage_region() {
       tail -n +2 "$boot_targets"
     } | sort -u
   } > "$merged_targets"
-  awk -F',' 'NR>1 && $1 != "" {print $1}' "$merged_targets" > "$cid_file"
+  write_cids_from_targets_csv "$merged_targets" "$cid_file"
 
   while IFS=',' read -r cid cpath; do
     [[ "$cid" == "compartment-id" ]] && continue
@@ -933,7 +917,6 @@ merge_storage_region() {
   local boot_backups_jsonl
   local block_replicas_jsonl
   local boot_replicas_jsonl
-  local -a part_files
   out_dir="report/storage/regions/${region}"
   inventory_jsonl="${out_dir}/storage_inventory.jsonl"
   block_backups_jsonl="${out_dir}/block_backups.jsonl"
@@ -941,18 +924,11 @@ merge_storage_region() {
   block_replicas_jsonl="${out_dir}/block_replicas.jsonl"
   boot_replicas_jsonl="${out_dir}/boot_replicas.jsonl"
 
-  : > "$inventory_jsonl"
-  : > "$block_backups_jsonl"
-  : > "$boot_backups_jsonl"
-  : > "$block_replicas_jsonl"
-  : > "$boot_replicas_jsonl"
-  shopt -s nullglob
-  part_files=("${out_dir}/compartments/"*.inventory.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$inventory_jsonl"
-  part_files=("${out_dir}/compartments/"*.block_backups.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$block_backups_jsonl"
-  part_files=("${out_dir}/compartments/"*.boot_backups.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$boot_backups_jsonl"
-  part_files=("${out_dir}/compartments/"*.block_replicas.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$block_replicas_jsonl"
-  part_files=("${out_dir}/compartments/"*.boot_replicas.jsonl); [[ "${#part_files[@]}" -gt 0 ]] && cat "${part_files[@]}" >> "$boot_replicas_jsonl"
-  shopt -u nullglob
+  concat_compartment_parts "${out_dir}/compartments" "*.inventory.jsonl" "$inventory_jsonl"
+  concat_compartment_parts "${out_dir}/compartments" "*.block_backups.jsonl" "$block_backups_jsonl"
+  concat_compartment_parts "${out_dir}/compartments" "*.boot_backups.jsonl" "$boot_backups_jsonl"
+  concat_compartment_parts "${out_dir}/compartments" "*.block_replicas.jsonl" "$block_replicas_jsonl"
+  concat_compartment_parts "${out_dir}/compartments" "*.boot_replicas.jsonl" "$boot_replicas_jsonl"
 
   jq -s 'group_by(.sourceId) | map({(.[0].sourceId): {backupCount: length, latestBackupTime: (map(.timeCreated) | max), latestBackupType: (sort_by(.timeCreated) | last | .backupType)}}) | add // {}' "$block_backups_jsonl" > "${out_dir}/block_backup_index.json"
   jq -s 'group_by(.sourceId) | map({(.[0].sourceId): {backupCount: length, latestBackupTime: (map(.timeCreated) | max), latestBackupType: (sort_by(.timeCreated) | last | .backupType)}}) | add // {}' "$boot_backups_jsonl" > "${out_dir}/boot_backup_index.json"
@@ -1013,15 +989,12 @@ merge_storage_region() {
 merge_storage_regions() {
   init_report_dirs
   ensure_target_regions
-  local -a regions json_files
+  local -a json_files
   local region f
-  regions=()
   json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
+  collect_target_regions_array
 
-  for region in "${regions[@]}"; do
+  for region in "${TARGET_REGIONS[@]}"; do
     f="report/storage/regions/${region}/storage_inventory_enriched.json"
     [[ -s "$f" ]] || fatal "Missing region storage artifact: $f"
     json_files+=("$f")
@@ -1032,7 +1005,7 @@ merge_storage_regions() {
 
   {
     echo "region,compartment-id,compartment-path"
-    for region in "${regions[@]}"; do
+    for region in "${TARGET_REGIONS[@]}"; do
       if [[ -s "report/storage/regions/${region}/storage_target_compartments.csv" ]]; then
         tail -n +2 "report/storage/regions/${region}/storage_target_compartments.csv"
       fi
@@ -1260,17 +1233,14 @@ build_limits_region() {
 merge_limits_regions_by_service() {
   local service_name="$1"
   local slug
-  local -a regions json_files
+  local -a json_files
   local region f
   init_report_dirs
   ensure_target_regions
   slug="$(limit_service_slug "$service_name")"
-  regions=()
   json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
-  for region in "${regions[@]}"; do
+  collect_target_regions_array
+  for region in "${TARGET_REGIONS[@]}"; do
     f="report/limits/regions/${region}/${slug}_limits.json"
     [[ -s "$f" ]] || fatal "Missing region limits artifact: $f"
     json_files+=("$f")
@@ -1432,7 +1402,7 @@ prepare_base_database_region() {
   mkdir -p "${out_dir}/compartments"
   rm -f "${out_dir}/compartments/"*.jsonl
   search "query database resources" "$target_file" "$region"
-  awk -F',' 'NR>1 && $1 != "" {print $1}' "$target_file" > "$cid_file"
+  write_cids_from_targets_csv "$target_file" "$cid_file"
   local total
   total="$(wc -l < "$cid_file" | tr -d ' ')"
   verbose "Done. ${total} target compartments for ${region}."
@@ -1444,18 +1414,11 @@ merge_base_database_region() {
   local jsonl_file
   local json_file
   local csv_file
-  local -a part_files
   out_dir="report/base-database/regions/${region}"
   jsonl_file="${out_dir}/base_databases.jsonl"
   json_file="${out_dir}/base_databases.json"
   csv_file="${out_dir}/base_databases.csv"
-  : > "$jsonl_file"
-  shopt -s nullglob
-  part_files=("${out_dir}/compartments/"*.jsonl)
-  shopt -u nullglob
-  if [[ "${#part_files[@]}" -gt 0 ]]; then
-    cat "${part_files[@]}" >> "$jsonl_file"
-  fi
+  concat_compartment_parts "${out_dir}/compartments" "*.jsonl" "$jsonl_file"
   jq -s 'sort_by(.region, .compartmentPath, .dbName)' "$jsonl_file" > "$json_file"
   jq -r '
     ["compartment-id","compartment-path","region","db-name","db-unique-name","db-workload","db-version","db-system-id","db-home-id","vm-cluster-id","cdb-name","pdb-name","lifecycle-state","lifecycle-details","character-set","ncharacter-set","is-cdb","kms-key-id","kms-key-version-id","key-store-id","key-store-wallet-name","vault-id","database-software-image-id","sid-prefix","auto-backup-enabled","backup-recovery-window-in-days","backup-destination-type","auto-full-backup-day","last-backup-timestamp","last-failed-backup-timestamp","last-backup-duration-in-seconds","freeform-tag-count","defined-tag-namespace-count","time-created","id"],
@@ -1481,15 +1444,12 @@ build_base_database_region() {
 merge_base_database_regions() {
   init_report_dirs
   ensure_target_regions
-  local -a regions json_files
+  local -a json_files
   local region f
-  regions=()
   json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
+  collect_target_regions_array
 
-  for region in "${regions[@]}"; do
+  for region in "${TARGET_REGIONS[@]}"; do
     f="report/base-database/regions/${region}/base_databases.json"
     [[ -s "$f" ]] || fatal "Missing region base-database artifact: $f"
     json_files+=("$f")
@@ -1500,7 +1460,7 @@ merge_base_database_regions() {
 
   {
     echo "compartment-id,compartment-path"
-    for region in "${regions[@]}"; do
+    for region in "${TARGET_REGIONS[@]}"; do
       if [[ -s "report/base-database/regions/${region}/base_database_target_compartments_${region}.csv" ]]; then
         tail -n +2 "report/base-database/regions/${region}/base_database_target_compartments_${region}.csv"
       fi
@@ -1598,7 +1558,7 @@ prepare_object_storage_region() {
   mkdir -p "${out_dir}/compartments"
   rm -f "${out_dir}/compartments/"*.jsonl
   search "query bucket resources" "$target_file" "$region"
-  awk -F',' 'NR>1 && $1 != "" {print $1}' "$target_file" > "$cid_file"
+  write_cids_from_targets_csv "$target_file" "$cid_file"
   local total
   total="$(wc -l < "$cid_file" | tr -d ' ')"
   verbose "Done. ${total} target compartments for ${region}."
@@ -1610,18 +1570,11 @@ merge_object_storage_region() {
   local jsonl_file
   local json_file
   local csv_file
-  local -a part_files
   out_dir="report/object-storage/regions/${region}"
   jsonl_file="${out_dir}/buckets_inventory.jsonl"
   json_file="${out_dir}/buckets_inventory.json"
   csv_file="${out_dir}/buckets_inventory.csv"
-  : > "$jsonl_file"
-  shopt -s nullglob
-  part_files=("${out_dir}/compartments/"*.jsonl)
-  shopt -u nullglob
-  if [[ "${#part_files[@]}" -gt 0 ]]; then
-    cat "${part_files[@]}" >> "$jsonl_file"
-  fi
+  concat_compartment_parts "${out_dir}/compartments" "*.jsonl" "$jsonl_file"
   jq -s 'sort_by(.region, .compartmentPath, .bucketName)' "$jsonl_file" > "$json_file"
   jq -r '
     ["compartment-id","compartment-path","region","namespace","bucket-name","bucket-created-by","time-created","etag","freeform-tag-count","defined-tag-namespace-count","freeform-tag-keys","defined-tag-namespaces","defined-tag-key-count","freeform-tags-json","defined-tags-json","bucket-id","public-access-type","storage-tier","object-events-enabled","replication-enabled","is-read-only","versioning","auto-tiering","kms-key-id","approximate-object-count","approximate-size-bytes","object-lifecycle-policy-etag","metadata-key-count","id"],
@@ -1650,15 +1603,12 @@ build_object_storage_region() {
 merge_object_storage_regions() {
   init_report_dirs
   ensure_target_regions
-  local -a regions json_files
+  local -a json_files
   local region f
-  regions=()
   json_files=()
-  while IFS= read -r region; do
-    [[ -n "$region" ]] && regions+=("$region")
-  done < <(resolve_target_regions)
+  collect_target_regions_array
 
-  for region in "${regions[@]}"; do
+  for region in "${TARGET_REGIONS[@]}"; do
     f="report/object-storage/regions/${region}/buckets_inventory.json"
     [[ -s "$f" ]] || fatal "Missing region object-storage artifact: $f"
     json_files+=("$f")
@@ -1669,7 +1619,7 @@ merge_object_storage_regions() {
 
   {
     echo "compartment-id,compartment-path"
-    for region in "${regions[@]}"; do
+    for region in "${TARGET_REGIONS[@]}"; do
       if [[ -s "report/object-storage/regions/${region}/object_storage_target_compartments_${region}.csv" ]]; then
         tail -n +2 "report/object-storage/regions/${region}/object_storage_target_compartments_${region}.csv"
       fi
@@ -1713,49 +1663,40 @@ run_all_serial() {
 execute_command() {
   local cmd="$1"
   shift
-  local -a cmd_args=("$@")
 
   case "$cmd" in
     all)
       run_all_serial
       ;;
-    _regions)
+    regions)
       build_regions
       ;;
-    _compartments)
+    compartments)
       build_compartments
       ;;
     _policy-compartment)
-      [[ "${#cmd_args[@]}" -eq 2 ]] || fatal "Usage: _policy-compartment <compartment-ocid> <out-file>"
-      build_policy_compartment "${cmd_args[0]}" "${cmd_args[1]}"
+      build_policy_compartment "$1" "$2"
       ;;
     _compute-compartment)
-      [[ "${#cmd_args[@]}" -eq 3 ]] || fatal "Usage: _compute-compartment <region> <compartment-ocid> <out-file>"
-      build_compute_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}"
+      build_compute_compartment_region "$1" "$2" "$3"
       ;;
     _storage-compartment)
-      [[ "${#cmd_args[@]}" -eq 3 ]] || fatal "Usage: _storage-compartment <region> <compartment-ocid> <out-prefix>"
-      build_storage_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}"
+      build_storage_compartment_region "$1" "$2" "$3"
       ;;
     _base-database-compartment)
-      [[ "${#cmd_args[@]}" -eq 3 ]] || fatal "Usage: _base-database-compartment <region> <compartment-ocid> <out-file>"
-      build_base_database_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}"
+      build_base_database_compartment_region "$1" "$2" "$3"
       ;;
     _object-storage-compartment)
-      [[ "${#cmd_args[@]}" -eq 4 ]] || fatal "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>"
-      build_object_storage_compartment_region "${cmd_args[0]}" "${cmd_args[1]}" "${cmd_args[2]}" "${cmd_args[3]}"
+      build_object_storage_compartment_region "$1" "$2" "$3" "$4"
       ;;
     compute-region)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region <region>"
-      build_compute_region "${cmd_args[0]}"
+      build_compute_region "$1"
       ;;
     compute-region-prepare)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region-prepare <region>"
-      prepare_compute_region "${cmd_args[0]}"
+      prepare_compute_region "$1"
       ;;
     compute-region-merge)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: compute-region-merge <region>"
-      merge_compute_region "${cmd_args[0]}"
+      merge_compute_region "$1"
       ;;
     compute-merge)
       merge_compute_regions
@@ -1767,53 +1708,43 @@ execute_command() {
       merge_policies
       ;;
     block-storage-region)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region <region>"
-      build_storage_region "${cmd_args[0]}"
+      build_storage_region "$1"
       ;;
     block-storage-region-prepare)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region-prepare <region>"
-      prepare_storage_region "${cmd_args[0]}"
+      prepare_storage_region "$1"
       ;;
     block-storage-region-merge)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: block-storage-region-merge <region>"
-      merge_storage_region "${cmd_args[0]}"
+      merge_storage_region "$1"
       ;;
     block-storage-merge)
       merge_storage_regions
       ;;
     base-database-region)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region <region>"
-      build_base_database_region "${cmd_args[0]}"
+      build_base_database_region "$1"
       ;;
     base-database-region-prepare)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region-prepare <region>"
-      prepare_base_database_region "${cmd_args[0]}"
+      prepare_base_database_region "$1"
       ;;
     base-database-region-merge)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: base-database-region-merge <region>"
-      merge_base_database_region "${cmd_args[0]}"
+      merge_base_database_region "$1"
       ;;
     base-database-merge)
       merge_base_database_regions
       ;;
     object-storage-region)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region <region>"
-      build_object_storage_region "${cmd_args[0]}"
+      build_object_storage_region "$1"
       ;;
     object-storage-region-prepare)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region-prepare <region>"
-      prepare_object_storage_region "${cmd_args[0]}"
+      prepare_object_storage_region "$1"
       ;;
     object-storage-region-merge)
-      [[ "${#cmd_args[@]}" -eq 1 ]] || fatal "Usage: object-storage-region-merge <region>"
-      merge_object_storage_region "${cmd_args[0]}"
+      merge_object_storage_region "$1"
       ;;
     object-storage-merge)
       merge_object_storage_regions
       ;;
     limits-region)
-      [[ "${#cmd_args[@]}" -ge 1 ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
-      build_limits_region "${cmd_args[0]}" "${cmd_args[1]:-all}"
+      build_limits_region "$1" "${2:-all}"
       ;;
     compute-limits)
       build_compute_limits
@@ -1825,19 +1756,13 @@ execute_command() {
       build_object_storage_limits
       ;;
     limits-merge)
-      if [[ "${#cmd_args[@]}" -eq 0 ]] || [[ "${cmd_args[0]}" == "all" ]]; then
+      if [[ $# -eq 0 ]] || [[ "$1" == "all" ]]; then
         merge_limits_regions
-      elif [[ "${cmd_args[0]}" == "compute" ]] || [[ "${cmd_args[0]}" == "block-storage" ]] || [[ "${cmd_args[0]}" == "object-storage" ]]; then
-        merge_limits_regions_by_service "${cmd_args[0]}"
+      elif [[ "$1" == "compute" ]] || [[ "$1" == "block-storage" ]] || [[ "$1" == "object-storage" ]]; then
+        merge_limits_regions_by_service "$1"
       else
         fatal "Usage: limits-merge [all|compute|block-storage|object-storage]"
       fi
-      ;;
-    regions)
-      build_regions
-      ;;
-    compartments)
-      build_compartments
       ;;
     policies)
       build_policies
@@ -1866,73 +1791,125 @@ execute_command() {
   esac
 }
 
+is_limits_service_scope() {
+  case "$1" in
+    all|compute|block-storage|object-storage) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+command_fixed_arg_count() {
+  case "$1" in
+    help|-h|--help|all|regions|compartments|policies|compute|block-storage|base-database|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits|compute-merge|policies-prepare|policies-merge|block-storage-merge|base-database-merge|object-storage-merge)
+      echo 0
+      ;;
+    compute-region|compute-region-prepare|compute-region-merge|block-storage-region|block-storage-region-prepare|block-storage-region-merge|base-database-region|base-database-region-prepare|base-database-region-merge|object-storage-region|object-storage-region-prepare|object-storage-region-merge)
+      echo 1
+      ;;
+    _policy-compartment)
+      echo 2
+      ;;
+    _compute-compartment|_storage-compartment|_base-database-compartment)
+      echo 3
+      ;;
+    _object-storage-compartment)
+      echo 4
+      ;;
+    limits-region|limits-merge)
+      echo -1
+      ;;
+    *)
+      echo -2
+      ;;
+  esac
+}
+
+command_usage() {
+  case "$1" in
+    _policy-compartment) echo "Usage: _policy-compartment <compartment-ocid> <out-file>" ;;
+    _compute-compartment) echo "Usage: _compute-compartment <region> <compartment-ocid> <out-file>" ;;
+    _storage-compartment) echo "Usage: _storage-compartment <region> <compartment-ocid> <out-prefix>" ;;
+    _base-database-compartment) echo "Usage: _base-database-compartment <region> <compartment-ocid> <out-file>" ;;
+    _object-storage-compartment) echo "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>" ;;
+    compute-region) echo "Usage: compute-region <region>" ;;
+    compute-region-prepare) echo "Usage: compute-region-prepare <region>" ;;
+    compute-region-merge) echo "Usage: compute-region-merge <region>" ;;
+    block-storage-region) echo "Usage: block-storage-region <region>" ;;
+    block-storage-region-prepare) echo "Usage: block-storage-region-prepare <region>" ;;
+    block-storage-region-merge) echo "Usage: block-storage-region-merge <region>" ;;
+    base-database-region) echo "Usage: base-database-region <region>" ;;
+    base-database-region-prepare) echo "Usage: base-database-region-prepare <region>" ;;
+    base-database-region-merge) echo "Usage: base-database-region-merge <region>" ;;
+    object-storage-region) echo "Usage: object-storage-region <region>" ;;
+    object-storage-region-prepare) echo "Usage: object-storage-region-prepare <region>" ;;
+    object-storage-region-merge) echo "Usage: object-storage-region-merge <region>" ;;
+    limits-region) echo "Usage: limits-region <region> [all|compute|block-storage|object-storage]" ;;
+    limits-merge) echo "Usage: limits-merge [all|compute|block-storage|object-storage]" ;;
+    *)
+      echo "Unknown command: $1"
+      ;;
+  esac
+}
+
 run_commands_serially() {
   local -a positional=("$@")
   local i=0
   local cmd
+  local fixed_arg_count
+  local remaining
+  local take
+  local -a cmd_args
   local region
   local service_scope
 
   while [[ $i -lt ${#positional[@]} ]]; do
     cmd="${positional[$i]}"
     i=$((i + 1))
+    fixed_arg_count="$(command_fixed_arg_count "$cmd")"
 
-    case "$cmd" in
-      help|-h|--help|all|regions|compartments|policies|compute|block-storage|base-database|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits|compute-merge|policies-prepare|policies-merge|block-storage-merge|base-database-merge|object-storage-merge)
-        execute_command "$cmd"
+    case "$fixed_arg_count" in
+      -2)
+        fatal "Unknown command: $cmd"
         ;;
-      compute-region|compute-region-prepare|compute-region-merge|block-storage-region|block-storage-region-prepare|block-storage-region-merge|base-database-region|base-database-region-prepare|base-database-region-merge|object-storage-region|object-storage-region-prepare|object-storage-region-merge)
-        [[ $i -lt ${#positional[@]} ]] || fatal "Usage: ${cmd} <region>"
-        execute_command "$cmd" "${positional[$i]}"
-        i=$((i + 1))
-        ;;
-      limits-region)
-        [[ $i -lt ${#positional[@]} ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
-        region="${positional[$i]}"
-        i=$((i + 1))
-        service_scope="all"
-        if [[ $i -lt ${#positional[@]} ]]; then
-          case "${positional[$i]}" in
-            all|compute|block-storage|object-storage)
+      -1)
+        case "$cmd" in
+          limits-region)
+            [[ $i -lt ${#positional[@]} ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
+            region="${positional[$i]}"
+            i=$((i + 1))
+            service_scope="all"
+            if [[ $i -lt ${#positional[@]} ]] && is_limits_service_scope "${positional[$i]}"; then
               service_scope="${positional[$i]}"
               i=$((i + 1))
-              ;;
-          esac
-        fi
-        execute_command "$cmd" "$region" "$service_scope"
-        ;;
-      limits-merge)
-        service_scope="all"
-        if [[ $i -lt ${#positional[@]} ]]; then
-          case "${positional[$i]}" in
-            all|compute|block-storage|object-storage)
+            fi
+            execute_command "$cmd" "$region" "$service_scope"
+            ;;
+          limits-merge)
+            service_scope="all"
+            if [[ $i -lt ${#positional[@]} ]] && is_limits_service_scope "${positional[$i]}"; then
               service_scope="${positional[$i]}"
               i=$((i + 1))
-              ;;
-          esac
-        fi
-        execute_command "$cmd" "$service_scope"
-        ;;
-      _regions|_compartments)
-        execute_command "$cmd"
-        ;;
-      _policy-compartment)
-        [[ $((i + 1)) -lt ${#positional[@]} ]] || fatal "Usage: _policy-compartment <compartment-ocid> <out-file>"
-        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}"
-        i=$((i + 2))
-        ;;
-      _compute-compartment|_storage-compartment|_base-database-compartment)
-        [[ $((i + 2)) -lt ${#positional[@]} ]] || fatal "Usage: ${cmd} <region> <compartment-ocid> <out-file-or-prefix>"
-        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}" "${positional[$((i + 2))]}"
-        i=$((i + 3))
-        ;;
-      _object-storage-compartment)
-        [[ $((i + 3)) -lt ${#positional[@]} ]] || fatal "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>"
-        execute_command "$cmd" "${positional[$i]}" "${positional[$((i + 1))]}" "${positional[$((i + 2))]}" "${positional[$((i + 3))]}"
-        i=$((i + 4))
+            fi
+            execute_command "$cmd" "$service_scope"
+            ;;
+          *)
+            fatal "Unknown command: $cmd"
+            ;;
+        esac
         ;;
       *)
-        fatal "Unknown command: $cmd"
+        if [[ "$fixed_arg_count" -eq 0 ]]; then
+          execute_command "$cmd"
+          continue
+        fi
+        remaining=$(( ${#positional[@]} - i ))
+        [[ $remaining -ge $fixed_arg_count ]] || fatal "$(command_usage "$cmd")"
+        cmd_args=()
+        for ((take = 0; take < fixed_arg_count; take++)); do
+          cmd_args+=("${positional[$i]}")
+          i=$((i + 1))
+        done
+        execute_command "$cmd" "${cmd_args[@]}"
         ;;
     esac
   done

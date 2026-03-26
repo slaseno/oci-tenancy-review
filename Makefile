@@ -26,12 +26,12 @@ all: \
 regions: report/regions.txt
 
 report/regions.txt: $(REBUILD_DEPS)
-	@$(SCRIPT) _regions
+	@$(SCRIPT) regions
 
 compartments: report/compartments.csv
 
 report/compartments.csv: $(REBUILD_DEPS)
-	@$(SCRIPT) _compartments
+	@$(SCRIPT) compartments
 
 policies: report/policies/policy_statements.csv
 
