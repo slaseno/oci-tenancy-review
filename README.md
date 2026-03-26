@@ -13,7 +13,7 @@ We focus on **speed by concurrently scraping specific OCI domains** (e.g. comput
   - [Usage](#usage)
     - [Advanced: parallel fan-out + cached CSV outputs via Make](#advanced-parallel-fan-out--cached-csv-outputs-via-make)
     - [Setting target region(s) for discovery](#setting-target-regions-for-discovery)
-    - [Run a specific reporter](#run-a-specific-reporter)
+    - [Run a specific reporter (uncached)](#run-a-specific-reporter-uncached)
   - [Exported Files](#exported-files)
     - [`report/regions.txt`](#reportregionstxt)
     - [`report/compartments.csv`](#reportcompartmentscsv)
@@ -117,7 +117,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ## Usage
 
 ```bash
-# Run all reports
+# Run all reports (delegates to `make -j 4 --no-print-directory all`, so 4 jobs can execute concurrently)
 ./oci-tenancy-review all
 
 # Your reports are now available in the report subfolder
@@ -141,14 +141,14 @@ For larger tenancies or repeated runs, use `make` to execute region/compartment 
 
 ```bash
 # Build all top-level CSVs (cached by file timestamps) with 4 job runners
-make -j 4 all
+make -j 4 --no-print-directory all
 
 # Run specific job runner
-make -j 4 regions compartments policies compute block-storage base-database object-storage limits 
+make -j 4 --no-print-directory regions compartments policies compute block-storage base-database object-storage limits 
 
 # Build a specific CSV artifacts (this will execute the depending runner)
-make -j 4 report/compute/compute_instances.csv
-make -j 4 report/limits/service_limits.csv
+make -j 4 --no-print-directory report/compute/compute_instances.csv
+make -j 4 --no-print-directory report/limits/service_limits.csv
 ```
  
 `make` invalidates cached outputs automatically when `Makefile` or `oci-tenancy-review` changes.
@@ -176,14 +176,9 @@ By default, `eu-kragujevac-1` is blacklisted. You can override blacklist regions
 export BLACKLISTED_REGIONS="eu-amsterdam-1"
 ```
 
-### Run a specific reporter
+### Run a specific reporter (uncached)
 
 ```bash
-# Run selected workflow domains
-./oci-tenancy-review compute block-storage base-database object-storage
-# or parallel via 4 make jobs and cached output (only regenerate what is not here)
-make -j 4 compute block-storage base-database object-storage
-
 # Build report/regions.txt (reachable, non-blacklisted target regions)
 ./oci-tenancy-review regions
 

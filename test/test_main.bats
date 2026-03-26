@@ -830,42 +830,43 @@ EOF
   [[ "$output" == *"timed out"* ]]
 }
 
-@test "serial multi-command invocation works without make routing" {
+@test "multi-command positional invocation is rejected" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
   export REGIONS="eu-frankfurt-1"
 
   run "$SCRIPT_PATH" compute block-storage limits
-  [ "$status" -eq 0 ]
-  [ -f report/compute/compute_instances.csv ]
-  [ -f report/storage/storage_inventory.csv ]
-  [ -f report/limits/service_limits.csv ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Usage: compute"* ]]
 }
 
-@test "all runs self-contained without make in PATH" {
+@test "all delegates to make with expected args" {
   cd "$WORKDIR"
-  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
-  PATH="$TMPDIR_TEST/bin:/usr/bin:/bin"
+  local make_log="$TMPDIR_TEST/make_args.log"
+  cat > "$TMPDIR_TEST/bin/make" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "${MAKE_LOG:?}"
+exit 0
+EOF
+  chmod +x "$TMPDIR_TEST/bin/make"
+  export MAKE_LOG="$make_log"
 
   run "$SCRIPT_PATH" all
   [ "$status" -eq 0 ]
-  [ -f report/compartments.csv ]
-  [ -f report/compute/compute_instances.csv ]
-  [ -f report/storage/storage_inventory.csv ]
-  [ -f report/base-database/base_databases.csv ]
-  [ -f report/object-storage/buckets_inventory.csv ]
-  [ -f report/limits/service_limits.csv ]
-  [ -f report/policies/policy_statements.csv ]
+  run cat "$make_log"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"-j 4 --no-print-directory all"* ]]
 }
 
-@test "help describes serial execution and advanced make usage externally" {
+@test "help describes one-command invocation and make usage externally" {
   cd "$WORKDIR"
   export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
 
   run "$SCRIPT_PATH" help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Commands run serially in the order they are provided."* ]]
-  [[ "$output" != *"always orchestrated through Make"* ]]
+  [[ "$output" == *"One command per invocation."* ]]
+  [[ "$output" == *"The 'all' command delegates to Makefile parallel execution."* ]]
 }
 
 @test "make all declares dependency graph for parallel execution" {

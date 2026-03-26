@@ -13,7 +13,7 @@ COLOR_END=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0m" || printf "")
 
 usage() {
   cat <<USAGE
-Usage: ./oci-tenancy-review <command> [<command> ...]
+Usage: ./oci-tenancy-review <command> [args]
 Version: ${VERSION}
 
 Commands:
@@ -42,7 +42,8 @@ Commands:
   help           Show this help
 
 Note:
-  Commands run serially in the order they are provided.
+  One command per invocation.
+  The 'all' command delegates to Makefile parallel execution.
   Advanced parallel/cached execution is available via the repository Makefile.
 
 Required environment:
@@ -79,7 +80,6 @@ Examples:
   ./oci-tenancy-review limits-region eu-frankfurt-1 object-storage
   ./oci-tenancy-review limits-merge
   DEBUG=true ./oci-tenancy-review compute
-  ./oci-tenancy-review compute block-storage limits
   ./oci-tenancy-review all
 USAGE
 }
@@ -1650,14 +1650,12 @@ build_object_storage() {
   merge_object_storage_regions
 }
 
-run_all_serial() {
-  build_compartments
-  build_policies
-  build_compute
-  build_storage
-  build_base_database
-  build_object_storage
-  build_limits
+run_all_via_make() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  require_cmd make
+  log "make -C "$script_dir" -j 4 --no-print-directory all"
+  make -C "$script_dir" -j 4 --no-print-directory all
 }
 
 execute_command() {
@@ -1666,7 +1664,8 @@ execute_command() {
 
   case "$cmd" in
     all)
-      run_all_serial
+      [[ $# -eq 0 ]] || fatal "Usage: all"
+      run_all_via_make
       ;;
     regions)
       build_regions
@@ -1675,87 +1674,116 @@ execute_command() {
       build_compartments
       ;;
     _policy-compartment)
+      [[ $# -eq 2 ]] || fatal "Usage: _policy-compartment <compartment-ocid> <out-file>"
       build_policy_compartment "$1" "$2"
       ;;
     _compute-compartment)
+      [[ $# -eq 3 ]] || fatal "Usage: _compute-compartment <region> <compartment-ocid> <out-file>"
       build_compute_compartment_region "$1" "$2" "$3"
       ;;
     _storage-compartment)
+      [[ $# -eq 3 ]] || fatal "Usage: _storage-compartment <region> <compartment-ocid> <out-prefix>"
       build_storage_compartment_region "$1" "$2" "$3"
       ;;
     _base-database-compartment)
+      [[ $# -eq 3 ]] || fatal "Usage: _base-database-compartment <region> <compartment-ocid> <out-file>"
       build_base_database_compartment_region "$1" "$2" "$3"
       ;;
     _object-storage-compartment)
+      [[ $# -eq 4 ]] || fatal "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>"
       build_object_storage_compartment_region "$1" "$2" "$3" "$4"
       ;;
     compute-region)
+      [[ $# -eq 1 ]] || fatal "Usage: compute-region <region>"
       build_compute_region "$1"
       ;;
     compute-region-prepare)
+      [[ $# -eq 1 ]] || fatal "Usage: compute-region-prepare <region>"
       prepare_compute_region "$1"
       ;;
     compute-region-merge)
+      [[ $# -eq 1 ]] || fatal "Usage: compute-region-merge <region>"
       merge_compute_region "$1"
       ;;
     compute-merge)
+      [[ $# -eq 0 ]] || fatal "Usage: compute-merge"
       merge_compute_regions
       ;;
     policies-prepare)
+      [[ $# -eq 0 ]] || fatal "Usage: policies-prepare"
       prepare_policies
       ;;
     policies-merge)
+      [[ $# -eq 0 ]] || fatal "Usage: policies-merge"
       merge_policies
       ;;
     block-storage-region)
+      [[ $# -eq 1 ]] || fatal "Usage: block-storage-region <region>"
       build_storage_region "$1"
       ;;
     block-storage-region-prepare)
+      [[ $# -eq 1 ]] || fatal "Usage: block-storage-region-prepare <region>"
       prepare_storage_region "$1"
       ;;
     block-storage-region-merge)
+      [[ $# -eq 1 ]] || fatal "Usage: block-storage-region-merge <region>"
       merge_storage_region "$1"
       ;;
     block-storage-merge)
+      [[ $# -eq 0 ]] || fatal "Usage: block-storage-merge"
       merge_storage_regions
       ;;
     base-database-region)
+      [[ $# -eq 1 ]] || fatal "Usage: base-database-region <region>"
       build_base_database_region "$1"
       ;;
     base-database-region-prepare)
+      [[ $# -eq 1 ]] || fatal "Usage: base-database-region-prepare <region>"
       prepare_base_database_region "$1"
       ;;
     base-database-region-merge)
+      [[ $# -eq 1 ]] || fatal "Usage: base-database-region-merge <region>"
       merge_base_database_region "$1"
       ;;
     base-database-merge)
+      [[ $# -eq 0 ]] || fatal "Usage: base-database-merge"
       merge_base_database_regions
       ;;
     object-storage-region)
+      [[ $# -eq 1 ]] || fatal "Usage: object-storage-region <region>"
       build_object_storage_region "$1"
       ;;
     object-storage-region-prepare)
+      [[ $# -eq 1 ]] || fatal "Usage: object-storage-region-prepare <region>"
       prepare_object_storage_region "$1"
       ;;
     object-storage-region-merge)
+      [[ $# -eq 1 ]] || fatal "Usage: object-storage-region-merge <region>"
       merge_object_storage_region "$1"
       ;;
     object-storage-merge)
+      [[ $# -eq 0 ]] || fatal "Usage: object-storage-merge"
       merge_object_storage_regions
       ;;
     limits-region)
+      [[ $# -ge 1 && $# -le 2 ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
+      [[ $# -eq 1 ]] || is_limits_service_scope "$2" || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
       build_limits_region "$1" "${2:-all}"
       ;;
     compute-limits)
+      [[ $# -eq 0 ]] || fatal "Usage: compute-limits"
       build_compute_limits
       ;;
     block-storage-limits)
+      [[ $# -eq 0 ]] || fatal "Usage: block-storage-limits"
       build_block_storage_limits
       ;;
     object-storage-limits)
+      [[ $# -eq 0 ]] || fatal "Usage: object-storage-limits"
       build_object_storage_limits
       ;;
     limits-merge)
+      [[ $# -le 1 ]] || fatal "Usage: limits-merge [all|compute|block-storage|object-storage]"
       if [[ $# -eq 0 ]] || [[ "$1" == "all" ]]; then
         merge_limits_regions
       elif [[ "$1" == "compute" ]] || [[ "$1" == "block-storage" ]] || [[ "$1" == "object-storage" ]]; then
@@ -1765,24 +1793,31 @@ execute_command() {
       fi
       ;;
     policies)
+      [[ $# -eq 0 ]] || fatal "Usage: policies"
       build_policies
       ;;
     compute)
+      [[ $# -eq 0 ]] || fatal "Usage: compute"
       build_compute
       ;;
     block-storage)
+      [[ $# -eq 0 ]] || fatal "Usage: block-storage"
       build_storage
       ;;
     base-database)
+      [[ $# -eq 0 ]] || fatal "Usage: base-database"
       build_base_database
       ;;
     object-storage)
+      [[ $# -eq 0 ]] || fatal "Usage: object-storage"
       build_object_storage
       ;;
     limits)
+      [[ $# -eq 0 ]] || fatal "Usage: limits"
       build_limits
       ;;
     help|-h|--help)
+      [[ $# -eq 0 ]] || fatal "Usage: help"
       usage
       ;;
     *)
@@ -1798,139 +1833,9 @@ is_limits_service_scope() {
   esac
 }
 
-command_fixed_arg_count() {
-  case "$1" in
-    help|-h|--help|all|regions|compartments|policies|compute|block-storage|base-database|object-storage|compute-limits|block-storage-limits|object-storage-limits|limits|compute-merge|policies-prepare|policies-merge|block-storage-merge|base-database-merge|object-storage-merge)
-      echo 0
-      ;;
-    compute-region|compute-region-prepare|compute-region-merge|block-storage-region|block-storage-region-prepare|block-storage-region-merge|base-database-region|base-database-region-prepare|base-database-region-merge|object-storage-region|object-storage-region-prepare|object-storage-region-merge)
-      echo 1
-      ;;
-    _policy-compartment)
-      echo 2
-      ;;
-    _compute-compartment|_storage-compartment|_base-database-compartment)
-      echo 3
-      ;;
-    _object-storage-compartment)
-      echo 4
-      ;;
-    limits-region|limits-merge)
-      echo -1
-      ;;
-    *)
-      echo -2
-      ;;
-  esac
-}
-
-command_usage() {
-  case "$1" in
-    _policy-compartment) echo "Usage: _policy-compartment <compartment-ocid> <out-file>" ;;
-    _compute-compartment) echo "Usage: _compute-compartment <region> <compartment-ocid> <out-file>" ;;
-    _storage-compartment) echo "Usage: _storage-compartment <region> <compartment-ocid> <out-prefix>" ;;
-    _base-database-compartment) echo "Usage: _base-database-compartment <region> <compartment-ocid> <out-file>" ;;
-    _object-storage-compartment) echo "Usage: _object-storage-compartment <region> <compartment-ocid> <out-file> <namespace>" ;;
-    compute-region) echo "Usage: compute-region <region>" ;;
-    compute-region-prepare) echo "Usage: compute-region-prepare <region>" ;;
-    compute-region-merge) echo "Usage: compute-region-merge <region>" ;;
-    block-storage-region) echo "Usage: block-storage-region <region>" ;;
-    block-storage-region-prepare) echo "Usage: block-storage-region-prepare <region>" ;;
-    block-storage-region-merge) echo "Usage: block-storage-region-merge <region>" ;;
-    base-database-region) echo "Usage: base-database-region <region>" ;;
-    base-database-region-prepare) echo "Usage: base-database-region-prepare <region>" ;;
-    base-database-region-merge) echo "Usage: base-database-region-merge <region>" ;;
-    object-storage-region) echo "Usage: object-storage-region <region>" ;;
-    object-storage-region-prepare) echo "Usage: object-storage-region-prepare <region>" ;;
-    object-storage-region-merge) echo "Usage: object-storage-region-merge <region>" ;;
-    limits-region) echo "Usage: limits-region <region> [all|compute|block-storage|object-storage]" ;;
-    limits-merge) echo "Usage: limits-merge [all|compute|block-storage|object-storage]" ;;
-    *)
-      echo "Unknown command: $1"
-      ;;
-  esac
-}
-
-run_commands_serially() {
-  local -a positional=("$@")
-  local i=0
-  local cmd
-  local fixed_arg_count
-  local remaining
-  local take
-  local -a cmd_args
-  local region
-  local service_scope
-
-  while [[ $i -lt ${#positional[@]} ]]; do
-    cmd="${positional[$i]}"
-    i=$((i + 1))
-    fixed_arg_count="$(command_fixed_arg_count "$cmd")"
-
-    case "$fixed_arg_count" in
-      -2)
-        fatal "Unknown command: $cmd"
-        ;;
-      -1)
-        case "$cmd" in
-          limits-region)
-            [[ $i -lt ${#positional[@]} ]] || fatal "Usage: limits-region <region> [all|compute|block-storage|object-storage]"
-            region="${positional[$i]}"
-            i=$((i + 1))
-            service_scope="all"
-            if [[ $i -lt ${#positional[@]} ]] && is_limits_service_scope "${positional[$i]}"; then
-              service_scope="${positional[$i]}"
-              i=$((i + 1))
-            fi
-            execute_command "$cmd" "$region" "$service_scope"
-            ;;
-          limits-merge)
-            service_scope="all"
-            if [[ $i -lt ${#positional[@]} ]] && is_limits_service_scope "${positional[$i]}"; then
-              service_scope="${positional[$i]}"
-              i=$((i + 1))
-            fi
-            execute_command "$cmd" "$service_scope"
-            ;;
-          *)
-            fatal "Unknown command: $cmd"
-            ;;
-        esac
-        ;;
-      *)
-        if [[ "$fixed_arg_count" -eq 0 ]]; then
-          execute_command "$cmd"
-          continue
-        fi
-        remaining=$(( ${#positional[@]} - i ))
-        [[ $remaining -ge $fixed_arg_count ]] || fatal "$(command_usage "$cmd")"
-        cmd_args=()
-        for ((take = 0; take < fixed_arg_count; take++)); do
-          cmd_args+=("${positional[$i]}")
-          i=$((i + 1))
-        done
-        execute_command "$cmd" "${cmd_args[@]}"
-        ;;
-    esac
-  done
-}
-
 main() {
-  local -a positional
-  positional=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      *)
-        positional+=("$1")
-        ;;
-    esac
-    shift
-  done
-
-  if [[ "${#positional[@]}" -eq 0 ]]; then
-    positional=("help")
-  fi
+  local cmd="${1:-help}"
+  shift || true
 
   if [[ "${DEBUG:-false}" == "true" ]]; then
     DEBUG_MODE="true"
@@ -1938,11 +1843,14 @@ main() {
 
   [[ "$DEBUG_MODE" == "true" ]] && set -x
 
-  require_cmd oci
-  require_cmd jq
-  require_cmd awk
-  require_cmd sort
-  run_commands_serially "${positional[@]}"
+  if [[ "$cmd" != "all" ]] && [[ "$cmd" != "help" ]] && [[ "$cmd" != "-h" ]] && [[ "$cmd" != "--help" ]]; then
+    require_cmd oci
+    require_cmd jq
+    require_cmd awk
+    require_cmd sort
+  fi
+
+  execute_command "$cmd" "$@"
 }
 
 main "$@"
