@@ -86,27 +86,37 @@ USAGE
 
 log() {
   local msg="$1"
-  printf '%b[I] %s: %s%b\n' "$COLOR_GREEN" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '%b%s [I] %s: %s%b\n' "$COLOR_GREEN" "$ts" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
 }
 
 verbose() {
   local msg="$1"
-  printf '%b[V] %s: %s%b\n' "$COLOR_GRAY" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '%b%s [V] %s: %s%b\n' "$COLOR_GRAY" "$ts" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
 }
 
 warn() {
   local msg="$1"
-  printf '%b[W] %s: %s%b\n' "$COLOR_YELLOW" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '%b%s [W] %s: %s%b\n' "$COLOR_YELLOW" "$ts" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
 }
 
 err() {
   local msg="$1"
-  printf '%b[E] %s: %s%b\n' "$COLOR_RED" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '%b%s [E] %s: %s%b\n' "$COLOR_RED" "$ts" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
 }
 
 fatal() {
   local msg="$1"
-  printf '%b[F] %s: %s%b\n' "$COLOR_RED" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '%b%s [F] %s: %s%b\n' "$COLOR_RED" "$ts" "${FUNCNAME[1]}" "$msg" "$COLOR_END" >&2
   exit 1
 }
 
