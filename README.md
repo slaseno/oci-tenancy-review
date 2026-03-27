@@ -10,6 +10,8 @@ We focus on **speed by concurrently scraping specific OCI domains** (e.g. comput
 <video src="https://github.com/user-attachments/assets/9863fe12-ed46-4918-8288-45d009b8f549" width="80%" controls></video>
 </p>
 
+![csv and exported folder structure](https://github.com/user-attachments/assets/3a3db547-8a7f-4c36-9828-7b45fc4f714a)
+
 - [OCI Tenancy Review](#oci-tenancy-review)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
