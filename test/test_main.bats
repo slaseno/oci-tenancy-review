@@ -3,6 +3,7 @@
 setup() {
   SCRIPT_PATH="$BATS_TEST_DIRNAME/../oci-tenancy-review"
   TMPDIR_TEST="$(mktemp -d)"
+  export REAL_JQ="$(command -v jq)"
   export WORKDIR="$TMPDIR_TEST/work"
   mkdir -p "$WORKDIR"
   export OCI_TEST_THROTTLE_STATE_FILE="$TMPDIR_TEST/oci_throttle_state"
@@ -41,7 +42,8 @@ ERR
 fi
 
 if [[ "$args" == iam\ compartment\ list* ]]; then
-  cat <<'JSON'
+  child_name="${OCI_TEST_CHILD_COMPARTMENT_NAME:-child}"
+  cat <<JSON
 {
   "data": [
     {
@@ -51,7 +53,7 @@ if [[ "$args" == iam\ compartment\ list* ]]; then
     },
     {
       "id": "ocid1.compartment.oc1..child",
-      "name": "child",
+      "name": "${child_name}",
       "compartment-id": "ocid1.tenancy.oc1..tenancy"
     }
   ]
@@ -636,6 +638,32 @@ teardown() {
   [[ "$output" == *"ACTIVE"* ]]
   [[ "$output" == *"Policy for child compartment"* ]]
   [[ "$output" == *",1,2,"* ]]
+}
+
+@test "compartment path text is not passed as jq CLI argument" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  export REGIONS="eu-frankfurt-1"
+  export OCI_TEST_CHILD_COMPARTMENT_NAME="blocked-word team"
+  export OCI_TEST_FAIL_ON_JQ_ARG_PATTERN="blocked-word team"
+
+  cat > "$TMPDIR_TEST/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${OCI_TEST_FAIL_ON_JQ_ARG_PATTERN:-}" ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == *"${OCI_TEST_FAIL_ON_JQ_ARG_PATTERN}"* ]]; then
+      echo "blocked: jq arg contains forbidden pattern" >&2
+      exit 99
+    fi
+  done
+fi
+exec "${REAL_JQ:?}" "$@"
+EOF
+  chmod +x "$TMPDIR_TEST/bin/jq"
+
+  run "$SCRIPT_PATH" compute
+  [ "$status" -eq 0 ]
 }
 
 @test "limits command writes service_limits.csv" {

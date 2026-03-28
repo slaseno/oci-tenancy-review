@@ -380,6 +380,14 @@ get_compartment_path() {
   awk -F',' -v cid="$cid" 'NR>1 && $1==cid {sub(/^[^,]*,/, "", $0); print $0; exit}' report/compartments.csv
 }
 
+write_compartment_path_file() {
+  local cpath="$1"
+  local cpath_file
+  cpath_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-cpath.XXXXXX")"
+  printf '%s' "$cpath" > "$cpath_file"
+  printf '%s\n' "$cpath_file"
+}
+
 build_region_limit_prefixes() {
   local region="$1"
   local out_file="$2"
@@ -530,9 +538,11 @@ build_policy_compartment() {
   local cid="$1"
   local out_file="$2"
   local cpath
+  local cpath_file
   cpath="$(get_compartment_path "$cid")"
+  cpath_file="$(write_compartment_path_file "$cpath")"
   oci_cli iam policy list -c "$cid" --all --output json \
-    | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+    | jq -c --arg cid "$cid" --rawfile cpath "$cpath_file" '
         .data[]? | {
           compartmentId: $cid,
           compartmentPath: $cpath,
@@ -546,6 +556,7 @@ build_policy_compartment() {
           statements: .statements
         }
       ' > "$out_file"
+  rm -f "$cpath_file"
 }
 
 merge_policies() {
@@ -638,9 +649,11 @@ build_compute_compartment_region() {
   local cid="$2"
   local out_file="$3"
   local cpath
+  local cpath_file
   cpath="$(get_compartment_path "$cid")"
+  cpath_file="$(write_compartment_path_file "$cpath")"
   oci_cli compute instance list --compartment-id "$cid" --all --region "$region" --output json \
-    | jq -c --arg cid "$cid" --arg cpath "$cpath" '
+    | jq -c --arg cid "$cid" --rawfile cpath "$cpath_file" '
         .data[]? | {
           compartmentId: $cid,
           compartmentPath: $cpath,
@@ -685,6 +698,7 @@ build_compute_compartment_region() {
           timeCreated: ."time-created"
         }
       ' > "$out_file"
+  rm -f "$cpath_file"
 }
 
 build_storage_compartment_region() {
@@ -692,10 +706,12 @@ build_storage_compartment_region() {
   local cid="$2"
   local out_prefix="$3"
   local cpath
+  local cpath_file
   cpath="$(get_compartment_path "$cid")"
+  cpath_file="$(write_compartment_path_file "$cpath")"
 
   oci_cli bv volume list --compartment-id "$cid" --all --region "$region" --output json \
-    | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
+    | jq -c --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" '
         .data[]? | {
           kind: "block-volume",
           region: $region,
@@ -723,7 +739,7 @@ build_storage_compartment_region() {
       ' > "${out_prefix}.inventory.jsonl"
 
   oci_cli bv boot-volume list --compartment-id "$cid" --all --region "$region" --output json \
-    | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
+    | jq -c --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" '
         .data[]? | {
           kind: "boot-volume",
           region: $region,
@@ -758,6 +774,7 @@ build_storage_compartment_region() {
     | jq -c '.data[]? | {sourceId: (."source-volume-id" // ."volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.block_replicas.jsonl"
   oci_cli bv boot-volume-replica list --compartment-id "$cid" --all --region "$region" --output json \
     | jq -c '.data[]? | {sourceId: (."source-boot-volume-id" // ."boot-volume-id" // ."source-details".id // .sourceDetails.id // ""), lifecycleState: ."lifecycle-state"} | select(.sourceId != "")' > "${out_prefix}.boot_replicas.jsonl"
+  rm -f "$cpath_file"
 }
 
 build_compute_region() {
@@ -1351,9 +1368,11 @@ build_base_database_compartment_region() {
   local cid="$2"
   local out_file="$3"
   local cpath
+  local cpath_file
   cpath="$(get_compartment_path "$cid")"
+  cpath_file="$(write_compartment_path_file "$cpath")"
   oci_cli db database list --compartment-id "$cid" --region "$region" --output json \
-    | jq -c --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" '
+    | jq -c --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" '
         .data[]?
         | (."db-backup-config" // .dbBackupConfig // {}) as $b
         | {
@@ -1394,6 +1413,7 @@ build_base_database_compartment_region() {
           id: (.id // "")
         }
       ' > "$out_file"
+  rm -f "$cpath_file"
 }
 
 prepare_base_database_region() {
@@ -1507,8 +1527,10 @@ build_object_storage_compartment_region() {
   local out_file="$3"
   local namespace="$4"
   local cpath
+  local cpath_file
   local bucket_summary bucket_name bucket_namespace bucket_detail
   cpath="$(get_compartment_path "$cid")"
+  cpath_file="$(write_compartment_path_file "$cpath")"
   : > "$out_file"
   while IFS= read -r bucket_summary; do
     [[ -n "$bucket_summary" ]] || continue
@@ -1516,7 +1538,7 @@ build_object_storage_compartment_region() {
     [[ -n "$bucket_name" ]] || continue
     bucket_namespace="$(jq -r --arg ns "$namespace" '.namespace // $ns' <<< "$bucket_summary")"
     bucket_detail="$(oci_cli os bucket get --bucket-name "$bucket_name" --namespace-name "$bucket_namespace" --region "$region" --fields approximateCount --fields approximateSize --fields autoTiering --output json | jq -c '.data // {}')"
-    jq -cn --arg region "$region" --arg cid "$cid" --arg cpath "$cpath" --arg ns "$namespace" --argjson summary "$bucket_summary" --argjson detail "$bucket_detail" '
+    jq -cn --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" --arg ns "$namespace" --argjson summary "$bucket_summary" --argjson detail "$bucket_detail" '
       {
         compartmentId: $cid,
         compartmentPath: $cpath,
@@ -1550,6 +1572,7 @@ build_object_storage_compartment_region() {
       }
     ' >> "$out_file"
   done < <(oci_cli os bucket list --compartment-id "$cid" --all --fields tags --region "$region" --namespace-name "$namespace" --output json | jq -c '.data[]?')
+  rm -f "$cpath_file"
 }
 
 prepare_object_storage_region() {

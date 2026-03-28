@@ -6,11 +6,11 @@ This repository provides `./oci-tenancy-review`, a CLI tool to easily generate O
 
 We focus on **speed by concurrently scraping specific OCI domains** (e.g. compute, block-storage, base-database, object-storage, limits) rather than providing a full view of a whole OCI tenancy.
 
+Here's a sample video on how to download an archive of tenancy usage CSVs via [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm):   
+
 <p align="center" width="100%">
 <video src="https://github.com/user-attachments/assets/9863fe12-ed46-4918-8288-45d009b8f549" width="80%" controls></video>
 </p>
-
-![csv and exported folder structure](https://github.com/user-attachments/assets/3a3db547-8a7f-4c36-9828-7b45fc4f714a)
 
 - [OCI Tenancy Review](#oci-tenancy-review)
   - [Prerequisites](#prerequisites)
@@ -243,6 +243,8 @@ Notes:
 - Run `./oci-tenancy-review help` for command help.
 
 ## Exported Files
+
+![csv and exported folder structure](https://github.com/user-attachments/assets/3a3db547-8a7f-4c36-9828-7b45fc4f714a)
 
 ### `report/regions.txt`
 
