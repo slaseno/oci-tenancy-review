@@ -79,7 +79,7 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
     --query 'data[?starts_with(id, `ocid1.tenancy.`)].id | [0]' \
     --raw-output
 )}"
-echo "Your tenancy ocid is: '${TENANCY_OCID}'"
+echo "Your tenancy OCID is: '${TENANCY_OCID}'"
 
 ```
 </details>
@@ -100,7 +100,7 @@ export TENANCY_OCID="${TENANCY_OCID:-$(
     }
   ' ~/.oci/config
 )}"
-echo "Your tenancy ocid is: '${TENANCY_OCID}'"
+echo "Your tenancy OCID is: '${TENANCY_OCID}'"
 
 ```
 
@@ -114,7 +114,7 @@ To explicitly set your `TENANCY_OCID` use the following:
 ```bash
 # cat ~/.oci/config
 export TENANCY_OCID="ocid1.tenancy.oc1...."
-echo "Your tenancy ocid is: '${TENANCY_OCID}'"
+echo "Your tenancy OCID is: '${TENANCY_OCID}'"
 
 ```
 
@@ -128,7 +128,7 @@ echo "Your tenancy ocid is: '${TENANCY_OCID}'"
 ./oci-tenancy-review all
 
 # Your reports are now available in the report subfolder
-# If you are within a OCI cloud shell, you may want to archive this folder to easily download it
+# If you are within an OCI Cloud Shell, you may want to archive this folder to download it more easily
 tar -czvf report.tar.gz report
 
 ```
@@ -138,7 +138,7 @@ If you used OCI [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Con
 oci-tenancy-review/report.tar.gz
 ```
 
-Now inspect all .csv files in that archive.
+Now inspect all `.csv` files in that archive.
 
 ---
 
@@ -153,7 +153,7 @@ make -j 4 --no-print-directory all
 # Run specific job runner concurrently
 make -j 4 --no-print-directory regions compartments policies compute block-storage base-database object-storage limits 
 
-# Build a specific CSV artifact (this will execute the depending runner)
+# Build a specific CSV artifact (this will execute the dependent runner)
 make -j 4 --no-print-directory report/compute/compute_instances.csv
 make -j 4 --no-print-directory report/limits/service_limits.csv
 ```
