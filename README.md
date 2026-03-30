@@ -4,7 +4,7 @@
 
 This repository provides `./oci-tenancy-review`, a CLI tool to easily generate OCI tenancy bill of materials (BOMs) exported as CSV, compatible with [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm).
 
-We focus on **speed by concurrently scraping specific OCI domains** (e.g. compute, block-storage, base-database, object-storage, limits) rather than providing a full view of a whole OCI tenancy.
+We focus on **speed by concurrently scraping specific OCI domains** (e.g. compute, block-storage, base-database, object-storage, limits) rather than providing a full view of a whole OCI tenancy. These CSV artifacts can be cached granularly, making the process resumable.
 
 Here's a sample video on how to quickly download a full archive of usage CSVs of your tenancy via [Cloud Shell](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro.htm):   
 
