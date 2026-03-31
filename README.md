@@ -35,6 +35,8 @@ Here's a sample video on how to quickly download a full archive of usage CSVs of
     - [`report/limits/object_storage_limits.csv`](#reportlimitsobject_storage_limitscsv)
     - [Per-Region Reports](#per-region-reports)
   - [Tests](#tests)
+  - [Safety \& Auditability](#safety--auditability)
+    - [OCI Call Mapping](#oci-call-mapping)
   - [Design Choices](#design-choices)
   - [Alternatives](#alternatives)
 
@@ -482,6 +484,67 @@ also writes per-region artifacts:
 ```bash
 bats test/test_main.bats
 ```
+
+## Safety & Auditability
+
+The script is intentionally designed to be straightforward to audit:
+
+- **Read-only OCI usage:** all OCI CLI interactions use read-oriented operations (for example `list`, `get`, `search`).
+- **Local write scope:** generated artifacts are written under `./report/`.
+- **Runtime call log:** OCI calls and exit codes are written to `report/run.log` by default. Override with `RUN_LOG_FILE`.
+
+In CI/CD, we enforce this read-only expectation with automated tests. The Bats test suite includes a guard that scans executable source for mutating OCI CLI verbs (`create`, `update`, `delete`, `patch`, `put`, `remove`, `bulk-delete`) and fails if any are introduced. The GitHub Actions workflow runs these tests on every push and pull request.
+
+### OCI Call Mapping
+
+The following mapping summarizes top-level `./oci-tenancy-review` commands and OCI CLI calls used by the script.
+
+- Shared calls:
+  - `oci iam region-subscription list`
+  - `oci iam availability-domain list`
+  - `oci iam compartment list`
+
+- `regions`:
+  - `oci iam region-subscription list`
+  - `oci iam availability-domain list`
+
+- `compartments`:
+  - `oci iam compartment list`
+
+- `policies`:
+  - `oci search resource structured-search` (policy resources)
+  - `oci iam policy list`
+
+- `compute`, `compute-region`:
+  - `oci search resource structured-search` (instance resources)
+  - `oci compute instance list`
+
+- `block-storage`, `block-storage-region`:
+  - `oci search resource structured-search` (volume resources)
+  - `oci search resource structured-search` (bootvolume resources)
+  - `oci bv volume list`
+  - `oci bv boot-volume list`
+  - `oci bv backup list`
+  - `oci bv boot-volume-backup list`
+  - `oci bv block-volume-replica list`
+  - `oci bv boot-volume-replica list`
+
+- `base-database`, `base-database-region`:
+  - `oci search resource structured-search` (database resources)
+  - `oci db database list`
+
+- `object-storage`, `object-storage-region`:
+  - `oci search resource structured-search` (bucket resources)
+  - `oci os ns get`
+  - `oci os bucket list`
+  - `oci os bucket get`
+
+- `compute-limits`, `block-storage-limits`, `object-storage-limits`, `limits`, `limits-region`:
+  - `oci limits value list`
+  - `oci limits resource-availability get`
+
+- `all`:
+  - Delegates to `make`; resulting OCI calls are the union of the selected domain commands.
 
 ## Design Choices
 

@@ -897,6 +897,26 @@ EOF
   [[ "$output" == *"The 'all' command delegates to Makefile parallel execution."* ]]
 }
 
+@test "compute writes runtime call log under report/run.log by default" {
+  cd "$WORKDIR"
+  export TENANCY_OCID="ocid1.tenancy.oc1..tenancy"
+  export REGIONS="eu-frankfurt-1"
+
+  run "$SCRIPT_PATH" compute
+  [ "$status" -eq 0 ]
+  [ -f report/run.log ]
+  run cat report/run.log
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'command=compute\trc=0\toci iam region-subscription list'* ]]
+  [[ "$output" == *$'command=compute\trc=0\toci compute instance list'* ]]
+}
+
+@test "source contains no mutating OCI verbs" {
+  cd "$BATS_TEST_DIRNAME/.."
+  run bash -lc "if rg -n --pcre2 '\\boci\\b[^\\n]*\\b(create|update|delete|patch|put|remove|bulk-delete)\\b' oci-tenancy-review Makefile; then exit 1; fi"
+  [ "$status" -eq 0 ]
+}
+
 @test "make all declares dependency graph for parallel execution" {
   cd "$BATS_TEST_DIRNAME/.."
 

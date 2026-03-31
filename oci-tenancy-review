@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 VERSION="0.1.0"
 DEBUG_MODE="false"
+CURRENT_TOP_COMMAND=""
+RUN_LOG_FILE="${RUN_LOG_FILE:-report/run.log}"
 COLORS_ENABLED="${COLORS_ENABLED:=$( (command -v tput > /dev/null 2>&1 && [[ $(tput -T"${TERM:-dumb}" colors 2>/dev/null || echo 0) -ge 8 ]] && echo "true") || echo "false")}"
 COLOR_RED=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;31m" || printf "")
 COLOR_GREEN=$([ "$COLORS_ENABLED" == "true" ] && printf "\033[0;32m" || printf "")
@@ -50,6 +52,7 @@ Required environment:
   TENANCY_OCID   Tenancy OCID (ocid1.tenancy...)
 Optional environment:
   DEBUG         Set to 'true' to enable bash xtrace output.
+  RUN_LOG_FILE       Runtime log output path. Default: report/run.log
   REGIONS             Comma-separated region list for compute discovery (for example: eu-frankfurt-1,eu-zurich-1).
                       If unset, all subscribed regions are used.
   BLACKLISTED_REGIONS Comma-separated region blacklist for compute discovery.
@@ -129,6 +132,24 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fatal "Missing required command: $1"
 }
 
+ensure_run_log_parent_dir() {
+  local parent_dir
+  parent_dir="$(dirname "$RUN_LOG_FILE")"
+  mkdir -p "$parent_dir" 2>/dev/null || true
+}
+
+write_run_log() {
+  local rc="$1"
+  shift
+  local ts
+  local oci_cmd
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  oci_cmd="$(printf '%q ' oci "$@")"
+  oci_cmd="${oci_cmd% }"
+  ensure_run_log_parent_dir
+  printf '%s\tcommand=%s\trc=%s\t%s\n' "$ts" "${CURRENT_TOP_COMMAND:-unknown}" "$rc" "$oci_cmd" >> "$RUN_LOG_FILE" 2>/dev/null || true
+}
+
 is_rate_limited_error() {
   local msg="$1"
   local msg_lc
@@ -169,6 +190,7 @@ oci_cli() {
   else
     rc=$?
   fi
+  write_run_log "$rc" "$@"
 
   if [[ "$rc" -eq 0 ]]; then
     if [[ -s "$stderr_file" ]]; then
@@ -192,8 +214,13 @@ oci_cli() {
     warn "oci call rate-limited; retrying once after ${wait_seconds}s"
     sleep "$wait_seconds"
     progress_network_call_request
-    command oci "$@"
-    return $?
+    if command oci "$@"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    write_run_log "$rc" "$@"
+    return "$rc"
   fi
 
   if is_connection_timeout_error "$stderr_text"; then
@@ -203,8 +230,13 @@ oci_cli() {
     warn "oci call timed out; retrying once after ${wait_seconds}s"
     sleep "$wait_seconds"
     progress_network_call_request
-    command oci "$@"
-    return $?
+    if command oci "$@"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    write_run_log "$rc" "$@"
+    return "$rc"
   fi
 
   return "$rc"
@@ -1869,6 +1901,7 @@ is_limits_service_scope() {
 main() {
   local cmd="${1:-help}"
   shift || true
+  CURRENT_TOP_COMMAND="$cmd"
 
   if [[ "${DEBUG:-false}" == "true" ]]; then
     DEBUG_MODE="true"
