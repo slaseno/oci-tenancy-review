@@ -493,7 +493,11 @@ The script is intentionally designed to be straightforward to audit:
 - **Local write scope:** generated artifacts are written under `./report/`.
 - **Runtime call log:** OCI calls and exit codes are written to `report/run.log` by default. Override with `RUN_LOG_FILE`.
 
-In CI/CD, we enforce this read-only expectation with automated tests. The Bats test suite includes a guard that scans executable source for mutating OCI CLI verbs (`create`, `update`, `delete`, `patch`, `put`, `remove`, `bulk-delete`) and fails if any are introduced. The GitHub Actions workflow runs these tests on every push and pull request.
+In CI/CD, we enforce this read-only expectation with automated tests. The Bats test suite includes:
+- a blacklist guard that scans executable source for mutating OCI CLI verbs (`create`, `update`, `delete`, `patch`, `put`, `remove`, `bulk-delete`) and fails if any are introduced, and
+- a whitelist guard that allows only explicitly approved OCI invocation patterns used by this project.
+
+The GitHub Actions workflow runs these tests on every push and pull request.
 
 ### OCI Call Mapping
 

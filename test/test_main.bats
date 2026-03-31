@@ -927,6 +927,43 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "source uses only whitelisted OCI invocation patterns" {
+  cd "$BATS_TEST_DIRNAME/.."
+  run bash -lc '
+    set -euo pipefail
+    while IFS= read -r entry; do
+      code="${entry#*:*:}"
+      case "$code" in
+        *"command oci \"\$@\""* ) ;;
+        *"oci_cli \"\${args[@]}\""* ) ;;
+        *"oci_cli iam region-subscription list"* ) ;;
+        *"oci_cli iam availability-domain list"* ) ;;
+        *"oci_cli iam compartment list"* ) ;;
+        *"oci_cli iam policy list"* ) ;;
+        *"oci_cli compute instance list"* ) ;;
+        *"oci_cli bv volume list"* ) ;;
+        *"oci_cli bv boot-volume list"* ) ;;
+        *"oci_cli bv backup list"* ) ;;
+        *"oci_cli bv boot-volume-backup list"* ) ;;
+        *"oci_cli bv block-volume-replica list"* ) ;;
+        *"oci_cli bv boot-volume-replica list"* ) ;;
+        *"oci_cli limits value list"* ) ;;
+        *"oci_cli limits resource-availability get"* ) ;;
+        *"oci_cli db database list"* ) ;;
+        *"oci_cli os bucket get"* ) ;;
+        *"oci_cli os bucket list"* ) ;;
+        *"oci_cli os ns get"* ) ;;
+        *"oci os ns get "* ) ;;
+        *)
+          echo "Unapproved OCI invocation: $entry" >&2
+          exit 1
+          ;;
+      esac
+    done < <(rg -n --no-heading --color never "(command[[:space:]]+oci[[:space:]]+\"\\$@\"|oci_cli[[:space:]]|\\boci[[:space:]]+os[[:space:]]+ns[[:space:]]+get\\b)" oci-tenancy-review Makefile)
+  '
+  [ "$status" -eq 0 ]
+}
+
 @test "make all declares dependency graph for parallel execution" {
   cd "$BATS_TEST_DIRNAME/.."
 
