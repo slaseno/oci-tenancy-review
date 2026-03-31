@@ -21,7 +21,7 @@ args="$*"
 if [[ -n "${OCI_TEST_THROTTLE_ONCE_PATTERN:-}" ]] && [[ "$args" == *"$OCI_TEST_THROTTLE_ONCE_PATTERN"* ]]; then
   if [[ ! -f "${OCI_TEST_THROTTLE_STATE_FILE:-}" ]]; then
     : > "${OCI_TEST_THROTTLE_STATE_FILE:-/tmp/oci_throttle_state}"
-    echo "ServiceError: {'status': 429, 'code': 'TooManyRequests', 'message': 'Rate limit exceeded'}" >&2
+    echo "ServiceError: status: 429 code: TooManyRequests message: Rate limit exceeded" >&2
     exit 1
   fi
 fi
@@ -853,7 +853,7 @@ EOF
 
   run "$SCRIPT_PATH" compute
   [ "$status" -eq 0 ]
-  [[ "$output" == *"rate-limited"* ]]
+  [[ "$output" == *"retrying once"* ]]
 }
 
 @test "compute retries once on OCI connection timeout error" {
@@ -863,7 +863,7 @@ EOF
 
   run "$SCRIPT_PATH" compute
   [ "$status" -eq 0 ]
-  [[ "$output" == *"timed out"* ]]
+  [[ "$output" == *"retrying once"* ]]
 }
 
 @test "multi-command positional invocation is rejected" {

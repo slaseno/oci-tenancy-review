@@ -137,35 +137,11 @@ write_run_log() {
   printf '%s\tcommand=%s\trc=%s\t%s\n' "$ts" "${CURRENT_TOP_COMMAND:-unknown}" "$rc" "$oci_cmd" >> "$RUN_LOG_FILE" 2>/dev/null || true
 }
 
-is_rate_limited_error() {
-  local msg="$1"
-  local msg_lc
-  msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
-
-  [[ "$msg_lc" == *"toomanyrequests"* ]] && return 0
-  [[ "$msg_lc" == *"status: 429"* ]] && return 0
-  [[ "$msg_lc" == *"status': 429"* ]] && return 0
-  [[ "$msg_lc" == *'status": 429'* ]] && return 0
-  [[ "$msg_lc" == *"rate limit"* ]] && return 0
-  [[ "$msg_lc" == *"throttl"* ]] && return 0
-  return 1
-}
-
-is_connection_timeout_error() {
-  local msg="$1"
-  local msg_lc
-  msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
-
-  [[ "$msg_lc" == *"requestexception"* ]] || return 1
-  [[ "$msg_lc" == *"connection to endpoint timed out"* ]] && return 0
-  [[ "$msg_lc" == *"timed out"* ]] && return 0
-  return 1
-}
-
 oci_cli() {
   local stderr_file
   local rc
   local stderr_text
+  local stderr_text_lc
   local bailout_seconds
   local jitter_seconds
   local wait_seconds
@@ -193,28 +169,19 @@ oci_cli() {
     printf '%s\n' "$stderr_text" >&2
   fi
   rm -f "$stderr_file"
+  stderr_text_lc="$(printf '%s' "$stderr_text" | tr '[:upper:]' '[:lower:]')"
 
-  if is_rate_limited_error "$stderr_text"; then
-    bailout_seconds="${OCI_RATE_LIMIT_BAILOUT_SECONDS:-2}"
+  if [[ "$stderr_text_lc" == *"status: 429"* ]] \
+    || [[ "$stderr_text_lc" == *"requestexception"* ]] \
+    || [[ "$stderr_text_lc" == *"timed out"* ]] \
+    || [[ "$stderr_text_lc" == *"connection reset"* ]] \
+    || [[ "$stderr_text_lc" == *"connection refused"* ]] \
+    || [[ "$stderr_text_lc" == *"temporary failure"* ]] \
+    || [[ "$stderr_text_lc" == *"name or service not known"* ]]; then
+    bailout_seconds="${OCI_RETRY_BAILOUT_SECONDS:-2}"
     jitter_seconds=$((RANDOM % 2))
     wait_seconds=$((bailout_seconds + jitter_seconds))
-    warn "oci call rate-limited; retrying once after ${wait_seconds}s"
-    sleep "$wait_seconds"
-    print_dot
-    if command oci "$@"; then
-      rc=0
-    else
-      rc=$?
-    fi
-    write_run_log "$rc" "$@"
-    return "$rc"
-  fi
-
-  if is_connection_timeout_error "$stderr_text"; then
-    bailout_seconds="${OCI_TIMEOUT_BAILOUT_SECONDS:-2}"
-    jitter_seconds=$((RANDOM % 2))
-    wait_seconds=$((bailout_seconds + jitter_seconds))
-    warn "oci call timed out; retrying once after ${wait_seconds}s"
+    warn "oci call failed with retryable network condition; retrying once after ${wait_seconds}s"
     sleep "$wait_seconds"
     print_dot
     if command oci "$@"; then
