@@ -39,6 +39,8 @@ Here's a sample video on how to quickly download a full archive of usage CSVs of
     - [OCI Call Mapping](#oci-call-mapping)
   - [Design Choices](#design-choices)
   - [Alternatives](#alternatives)
+    - [Key Feature Comparison](#key-feature-comparison)
+    - [Practical Trade-off](#practical-trade-off)
 
 
 ## Prerequisites
@@ -497,7 +499,7 @@ In CI/CD, we enforce this read-only expectation with automated tests. The Bats t
 - a blacklist guard that scans executable source for mutating OCI CLI verbs (`create`, `update`, `delete`, `patch`, `put`, `remove`, `bulk-delete`) and fails if any are introduced, and
 - a whitelist guard that allows only explicitly approved OCI invocation patterns used by this project.
 
-The GitHub Actions workflow runs these tests on every push and pull request.
+The [GitHub Actions workflow](https://github.com/majodev/oci-tenancy-review/actions) runs these tests on every push and pull request.
 
 ### OCI Call Mapping
 
@@ -562,4 +564,31 @@ In practice, the script defines what data is fetched and exported, while `make` 
 
 ## Alternatives
 
-* [oci-python-sdk/examples/showoci](https://github.com/oracle/oci-python-sdk/blob/master/examples/showoci/README.md): More complete (but slower) continuous view of a customer tenancy.
+This tool is intentionally specialized for fast, targeted tenancy BOM extraction. If your primary goal is broader compliance coverage, there are stronger alternatives:
+
+| Alternative | Primary Goal | Collection Model | Typical Scope | Runtime/Complexity Profile | Best Fit |
+|---|---|---|---|---|---|
+| [CIS Compliance Script (`oci-cis-landingzone-quickstart`)](https://github.com/oci-landing-zones/oci-cis-landingzone-quickstart) | CIS/Best-Practice posture assessment | Python SDK-based checks across many benchmark controls; internal threaded execution | Broad tenancy security/compliance checks, detailed per-finding reports | Higher operational surface (Python env + dependencies), broader/heavier scans that can run significantly longer on large tenancies; no domain-targeted run mode or cache/resume model; limited real-time progress detail during execution | Security/compliance audits, benchmark tracking, governance programs |
+| [showoci (`oci-python-sdk/examples/showoci`)](https://github.com/oracle/oci-python-sdk/blob/master/examples/showoci/README.md) | General tenancy inventory exploration | Python SDK sample inventory traversal | Broad resource visibility | Broader and generally slower than focused OCI CLI scraping | Exploration and full-inventory style discovery |
+| `oci-tenancy-review` (this repo) | Fast operational BOM exports for selected domains | OCI CLI + Make fan-out + cacheable artifacts | Targeted compute/storage/database/object-storage/limits/policy views | Minimal runtime dependencies in Cloud Shell, optimized for repeated runs and fast CSV output | Ops reviews, tenancy snapshots, cost/capacity and architecture-oriented analysis |
+
+### Key Feature Comparison
+
+| Feature | `oci-tenancy-review` (this repo) | CIS Compliance Script (`oci-cis-landingzone-quickstart`) | showoci (`oci-python-sdk/examples/showoci`) |
+|---|---|---|---|
+| Domain-scoped execution (run only one focused domain) | Yes (`compute`, `block-storage`, `object-storage`, `base-database`, `limits`, `policies`, etc.) | No dedicated domain subcommands; broad report modes via global flags (`--raw`, `--obp`, `--all-resources`) | Partial via service flags, but oriented to broad service inventory extraction rather than fixed BOM domains |
+| Region targeting | Yes (`REGIONS`, plus per-region commands like `compute-region`) | Yes (`--regions`) | Yes (`-rg` / `-rgn`) |
+| Resumable/cache-aware artifact graph | Yes (Makefile target graph with cached outputs and incremental rebuilds) | No make-style cache/resume dependency graph | No make-style cache/resume dependency graph (can export cache snapshot, but not orchestrated incremental rebuild model) |
+| Concurrency | Yes (Make fan-out and per-domain orchestration) | Yes (threads and thread pools inside Python collector) | Yes (parallel processing by default, configurable thread count) |
+| Progress visibility while running | Clear per-domain/per-region command boundaries and artifact-level checkpoints | Limited; mostly coarse stage logs and end-of-stage counts | Moderate console output, but not focused on artifact checkpointing for resumable runs |
+| CSV analyst-friendliness (flat columns vs nested objects) | Optimized for analysis-friendly flattened CSV columns per domain | Raw data CSVs often include nested/object fields (for example compute structures), which makes direct spreadsheet analysis harder without extra transformation | Can export broad CSV data, but many outputs prioritize coverage over tightly normalized, domain-specific flat schemas |
+| Minimal Cloud Shell operational footprint | Yes (`bash` + `oci` + `jq`; `make` optional advanced path) | No (Python runtime + OCI SDK dependency surface) | No (Python runtime + OCI SDK dependency surface) |
+| Read-auditability controls for admins | Strong focus: small Bash entrypoint, explicit OCI command mapping, run log (`report/run.log`), CI tests enforcing read-only OCI command usage | Broader compliance engine; auditability is oriented to benchmark findings rather than a small script surface | Broad inventory tool; not focused on a small audited execution surface for targeted exports |
+| Primary output model | Targeted BOM CSV artifacts per domain (plus intermediate JSON) | Compliance findings/reports + optional raw data CSV/JSON | General inventory screen/CSV/JSON reporting |
+
+### Practical Trade-off
+
+Use this project when you want **speed, straightforward auditability, and focused exports**.  
+Use the CIS Compliance Script when you want **formal benchmark-aligned compliance depth** (at the cost of broader checks and heavier execution).
+
+If you are interested in a guide for easily executing the OCI CIS compliance script via Cloud Shell, checkout [my guide](https://github.com/majodev/oci-cis-cloud-shell-guide).
