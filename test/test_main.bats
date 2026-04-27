@@ -394,6 +394,88 @@ JSON
   exit 0
 fi
 
+if [[ "$args" == db\ backup\ list* ]]; then
+  cat <<'JSON'
+{
+  "data": [
+    {
+      "id": "ocid1.backup.oc1..b1",
+      "database-id": "ocid1.database.oc1..d1",
+      "database-size-in-gbs": 256
+    },
+    {
+      "id": "ocid1.backup.oc1..b2",
+      "database-id": "ocid1.database.oc1..d1",
+      "database-size-in-gbs": 128
+    }
+  ]
+}
+JSON
+  exit 0
+fi
+
+if [[ "$args" == db\ system\ get* ]]; then
+  cat <<'JSON'
+{
+  "data": {
+    "id": "ocid1.dbsystem.oc1..s1",
+    "display-name": "dbsys-1",
+    "availability-domain": "AD-1",
+    "shape": "VM.Standard2.4",
+    "hostname": "dbhost1",
+    "domain": "subnet.vcn.oraclevcn.com",
+    "cpu-core-count": 4,
+    "compute-model": "ECPU",
+    "compute-count": 8,
+    "memory-size-in-gbs": 60,
+    "node-count": 1,
+    "storage-volume-performance-mode": "HIGH_PERFORMANCE",
+    "data-storage-percentage": 80,
+    "data-storage-size-in-gbs": 256,
+    "reco-storage-size-in-gb": 64,
+    "license-model": "BRING_YOUR_OWN_LICENSE",
+    "disk-redundancy": "HIGH",
+    "sparse-diskgroup": false,
+    "kms-key-id": "ocid1.key.oc1..ksys1",
+    "lifecycle-state": "AVAILABLE",
+    "lifecycle-details": "DB System healthy",
+    "freeform-tags": {"owner":"db-team"},
+    "defined-tags": {"Operations":{"CostCenter":"77"}},
+    "time-created": "2026-01-06T00:00:00+00:00"
+  }
+}
+JSON
+  exit 0
+fi
+
+if [[ "$args" == db\ node\ list* ]]; then
+  cat <<'JSON'
+{
+  "data": [
+    {
+      "id": "ocid1.dbnode.oc1..n1",
+      "db-system-id": "ocid1.dbsystem.oc1..s1"
+    }
+  ]
+}
+JSON
+  exit 0
+fi
+
+if [[ "$args" == db\ node\ get* ]]; then
+  cat <<'JSON'
+{
+  "data": {
+    "id": "ocid1.dbnode.oc1..n1",
+    "db-system-id": "ocid1.dbsystem.oc1..s1",
+    "software-storage-size-in-gb": 120,
+    "db-node-storage-size-in-gbs": 150
+  }
+}
+JSON
+  exit 0
+fi
+
 if [[ "$args" == bv\ volume\ list* ]]; then
   cat <<'JSON'
 {
@@ -815,8 +897,8 @@ EOF
   run cat report/base-database/base_databases.csv
   [ "$status" -eq 0 ]
   local normalized_output="${output//\"/}"
-  [[ "$normalized_output" == *"compartment-id,compartment-path,region,db-name,db-unique-name,db-workload,db-version,db-system-id,db-home-id,vm-cluster-id,cdb-name,pdb-name,lifecycle-state,lifecycle-details,character-set,ncharacter-set,is-cdb,kms-key-id,kms-key-version-id,key-store-id,key-store-wallet-name,vault-id,database-software-image-id,sid-prefix,auto-backup-enabled,backup-recovery-window-in-days,backup-destination-type,auto-full-backup-day,last-backup-timestamp,last-failed-backup-timestamp,last-backup-duration-in-seconds,freeform-tag-count,defined-tag-namespace-count,time-created,id"* ]]
-  [[ "$output" == *"\"ocid1.compartment.oc1..child\",\"child\",\"eu-frankfurt-1\",\"APPDB\",\"APPDB_iad1\",\"OLTP\",\"19c\",\"ocid1.dbsystem.oc1..s1\",\"ocid1.dbhome.oc1..h1\",\"\",\"CDB1\",\"PDB1\",\"AVAILABLE\",\"Primary DB\",\"AL32UTF8\",\"AL16UTF16\",true,\"ocid1.key.oc1..kdb1\",\"ocid1.keyversion.oc1..kv1\",\"ocid1.keystore.oc1..ks1\",\"WLT1\",\"ocid1.vault.oc1..v1\",\"ocid1.dbsoftwareimage.oc1..img1\",\"DB\",true,7,\"NFS\",\"SUNDAY\",\"2026-01-08T00:00:00+00:00\",\"2026-01-09T00:00:00+00:00\",1234,1,1,\"2026-01-07T00:00:00+00:00\",\"ocid1.database.oc1..d1\""* ]]
+  [[ "$normalized_output" == *"compartment-id,compartment-path,region,db-name,db-unique-name,db-workload,db-version,db-system-id,db-system-display-name,db-system-shape,db-system-availability-domain,db-system-hostname,db-system-domain,db-system-cpu-core-count,db-system-compute-model,db-system-compute-count,db-system-memory-size-in-gbs,db-system-node-count,db-system-storage-volume-performance-mode,db-system-data-storage-percentage,db-system-data-storage-size-in-gbs,db-system-reco-storage-size-in-gb,db-system-software-storage-size-in-gb-total,db-system-total-storage-size-in-gbs,db-system-license-model,db-system-disk-redundancy,db-system-sparse-diskgroup,db-system-kms-key-id,db-system-lifecycle-state,db-system-lifecycle-details,db-system-freeform-tag-count,db-system-defined-tag-namespace-count,db-system-time-created,db-home-id,vm-cluster-id,cdb-name,pdb-name,lifecycle-state,lifecycle-details,character-set,ncharacter-set,is-cdb,kms-key-id,kms-key-version-id,key-store-id,key-store-wallet-name,vault-id,database-software-image-id,sid-prefix,auto-backup-enabled,backup-recovery-window-in-days,backup-destination-type,auto-full-backup-day,last-backup-timestamp,last-failed-backup-timestamp,last-backup-duration-in-seconds,database-backups-total-size-in-gbs,freeform-tag-count,defined-tag-namespace-count,time-created,id"* ]]
+  [[ "$output" == *"\"ocid1.compartment.oc1..child\",\"child\",\"eu-frankfurt-1\",\"APPDB\",\"APPDB_iad1\",\"OLTP\",\"19c\",\"ocid1.dbsystem.oc1..s1\",\"dbsys-1\",\"VM.Standard2.4\",\"AD-1\",\"dbhost1\",\"subnet.vcn.oraclevcn.com\",4,\"ECPU\",8,60,1,\"HIGH_PERFORMANCE\",80,256,64,120,440,\"BRING_YOUR_OWN_LICENSE\",\"HIGH\",false,\"ocid1.key.oc1..ksys1\",\"AVAILABLE\",\"DB System healthy\",1,1,\"2026-01-06T00:00:00+00:00\",\"ocid1.dbhome.oc1..h1\",\"\",\"CDB1\",\"PDB1\",\"AVAILABLE\",\"Primary DB\",\"AL32UTF8\",\"AL16UTF16\",true,\"ocid1.key.oc1..kdb1\",\"ocid1.keyversion.oc1..kv1\",\"ocid1.keystore.oc1..ks1\",\"WLT1\",\"ocid1.vault.oc1..v1\",\"ocid1.dbsoftwareimage.oc1..img1\",\"DB\",true,7,\"NFS\",\"SUNDAY\",\"2026-01-08T00:00:00+00:00\",\"2026-01-09T00:00:00+00:00\",1234,384,1,1,\"2026-01-07T00:00:00+00:00\",\"ocid1.database.oc1..d1\""* ]]
 }
 
 @test "object-storage command writes buckets_inventory.csv" {
@@ -956,6 +1038,10 @@ EOF
         *"oci_cli limits value list"* ) ;;
         *"oci_cli limits resource-availability get"* ) ;;
         *"oci_cli db database list"* ) ;;
+        *"oci_cli db backup list"* ) ;;
+        *"oci_cli db system get"* ) ;;
+        *"oci_cli db node list"* ) ;;
+        *"oci_cli db node get"* ) ;;
         *"oci_cli os bucket get"* ) ;;
         *"oci_cli os bucket list"* ) ;;
         *"oci_cli os ns get"* ) ;;

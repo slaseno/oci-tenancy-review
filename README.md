@@ -411,6 +411,31 @@ CSV header:
 - `db-workload`
 - `db-version`
 - `db-system-id`
+- `db-system-display-name`
+- `db-system-shape`
+- `db-system-availability-domain`
+- `db-system-hostname`
+- `db-system-domain`
+- `db-system-cpu-core-count`
+- `db-system-compute-model`
+- `db-system-compute-count`
+- `db-system-memory-size-in-gbs`
+- `db-system-node-count`
+- `db-system-storage-volume-performance-mode`
+- `db-system-data-storage-percentage`
+- `db-system-data-storage-size-in-gbs`
+- `db-system-reco-storage-size-in-gb`
+- `db-system-software-storage-size-in-gb-total`
+- `db-system-total-storage-size-in-gbs`
+- `db-system-license-model`
+- `db-system-disk-redundancy`
+- `db-system-sparse-diskgroup`
+- `db-system-kms-key-id`
+- `db-system-lifecycle-state`
+- `db-system-lifecycle-details`
+- `db-system-freeform-tag-count`
+- `db-system-defined-tag-namespace-count`
+- `db-system-time-created`
 - `db-home-id`
 - `vm-cluster-id`
 - `cdb-name`
@@ -434,10 +459,13 @@ CSV header:
 - `last-backup-timestamp`
 - `last-failed-backup-timestamp`
 - `last-backup-duration-in-seconds`
+- `database-backups-total-size-in-gbs`
 - `freeform-tag-count`
 - `defined-tag-namespace-count`
 - `time-created`
 - `id`
+
+Implementation detail: DB system metadata is enriched via `oci db system get`, while node metadata is gathered via `oci db node list` + `oci db node get`. This adds DB system storage context such as data, RECO, and software sizing to each database row. `db-system-total-storage-size-in-gbs` is a derived total of data + RECO + software storage. `database-backups-total-size-in-gbs` is the sum of backup `database-size-in-gbs` values returned by `oci db backup list`, so it reflects the database size recorded at backup time rather than a de-duplicated physical backup storage footprint.
 
 ### `report/limits/service_limits.csv`
 
@@ -538,6 +566,10 @@ The following mapping summarizes top-level `./oci-tenancy-review` commands and O
 - `base-database`, `base-database-region`:
   - `oci search resource structured-search` (database resources)
   - `oci db database list`
+  - `oci db backup list`
+  - `oci db system get`
+  - `oci db node list`
+  - `oci db node get`
 
 - `object-storage`, `object-storage-region`:
   - `oci search resource structured-search` (bucket resources)

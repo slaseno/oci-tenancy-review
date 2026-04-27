@@ -1337,18 +1337,169 @@ build_storage() {
   merge_storage_regions
 }
 
+build_base_database_db_system_map() {
+  local region="$1"
+  local cid="$2"
+  local db_system_ids_file="$3"
+  local out_file="$4"
+  local tmp_dir
+  local jsonl_file
+  local node_details_jsonl_file
+  local db_system_id
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/oci-review-db-systems.XXXXXX")"
+  jsonl_file="${tmp_dir}/db_systems.jsonl"
+  node_details_jsonl_file="${tmp_dir}/db_node_details.jsonl"
+  : > "$jsonl_file"
+  : > "$node_details_jsonl_file"
+
+  while IFS= read -r db_system_id; do
+    [[ -n "$db_system_id" ]] || continue
+    local db_system_file
+    local db_nodes_file
+    db_system_file="${tmp_dir}/${db_system_id}.json"
+    db_nodes_file="${tmp_dir}/${db_system_id}_nodes.json"
+
+    oci_cli db system get --db-system-id "$db_system_id" --region "$region" --output json > "$db_system_file"
+    oci_cli db node list --compartment-id "$cid" --db-system-id "$db_system_id" --region "$region" --all --output json > "$db_nodes_file"
+
+    : > "$node_details_jsonl_file"
+    while IFS= read -r db_node_id; do
+      [[ -n "$db_node_id" ]] || continue
+      oci_cli db node get --db-node-id "$db_node_id" --region "$region" --output json \
+        | jq -c '.data // .' >> "$node_details_jsonl_file"
+    done < <(jq -r '.data[]? | (.id // "") | select(length > 0)' "$db_nodes_file")
+
+    jq -cn --slurpfile dbs "$db_system_file" --slurpfile node_summaries "$db_nodes_file" --slurpfile node_details "$node_details_jsonl_file" '
+      ($dbs[0].data // $dbs[0] // {}) as $s
+      | ($node_summaries[0].data // []) as $summaryNodes
+      | (if ($node_details | length) > 0 then $node_details else $summaryNodes end) as $n
+      | ($n | map(."software-storage-size-in-gb" // .softwareStorageSizeInGB // empty)) as $softwareSizes
+      | ($s."data-storage-size-in-gbs" // $s.dataStorageSizeInGBs // empty) as $dataStorageSize
+      | ($s."reco-storage-size-in-gb" // $s.recoStorageSizeInGB // empty) as $recoStorageSize
+      | (if ($softwareSizes | length) == 0 then empty else ($softwareSizes | add) end) as $softwareStorageTotal
+      | {
+          id: ($s.id // ""),
+          value: {
+            dbSystemDisplayName: ($s."display-name" // $s.displayName // ""),
+            dbSystemShape: ($s.shape // ""),
+            dbSystemAvailabilityDomain: ($s."availability-domain" // $s.availabilityDomain // ""),
+            dbSystemHostname: ($s.hostname // ""),
+            dbSystemDomain: ($s.domain // ""),
+            dbSystemCpuCoreCount: ($s."cpu-core-count" // $s.cpuCoreCount // ""),
+            dbSystemComputeModel: ($s."compute-model" // $s.computeModel // ""),
+            dbSystemComputeCount: ($s."compute-count" // $s.computeCount // ""),
+            dbSystemMemorySizeInGbs: ($s."memory-size-in-gbs" // $s.memorySizeInGBs // ""),
+            dbSystemNodeCount: ($s."node-count" // $s.nodeCount // ""),
+            dbSystemStorageVolumePerformanceMode: ($s."storage-volume-performance-mode" // $s.storageVolumePerformanceMode // ""),
+            dbSystemDataStoragePercentage: ($s."data-storage-percentage" // $s.dataStoragePercentage // ""),
+            dbSystemDataStorageSizeInGbs: ($dataStorageSize // ""),
+            dbSystemRecoStorageSizeInGb: ($recoStorageSize // ""),
+            dbSystemSoftwareStorageSizeInGbTotal: (if ($softwareSizes | length) == 0 then "" else ($softwareSizes | add) end),
+            dbSystemTotalStorageSizeInGbs: (
+              [($dataStorageSize // empty), ($recoStorageSize // empty), ($softwareStorageTotal // empty)]
+              | if length == 0 then "" else add end
+            ),
+            dbSystemLicenseModel: ($s."license-model" // $s.licenseModel // ""),
+            dbSystemDiskRedundancy: ($s."disk-redundancy" // $s.diskRedundancy // ""),
+            dbSystemSparseDiskgroup: (
+              if ($s | has("sparse-diskgroup")) then $s."sparse-diskgroup"
+              elif ($s | has("sparseDiskgroup")) then $s.sparseDiskgroup
+              else ""
+              end
+            ),
+            dbSystemKmsKeyId: ($s."kms-key-id" // $s.kmsKeyId // ""),
+            dbSystemLifecycleState: ($s."lifecycle-state" // $s.lifecycleState // ""),
+            dbSystemLifecycleDetails: ($s."lifecycle-details" // $s.lifecycleDetails // ""),
+            dbSystemFreeformTagCount: (($s."freeform-tags" // $s.freeformTags // {}) | keys | length),
+            dbSystemDefinedTagNamespaceCount: (($s."defined-tags" // $s.definedTags // {}) | keys | length),
+            dbSystemTimeCreated: ($s."time-created" // $s.timeCreated // "")
+          }
+        }
+    ' >> "$jsonl_file"
+  done < "$db_system_ids_file"
+
+  if [[ -s "$jsonl_file" ]]; then
+    jq -s 'map(select(.id != "")) | map({key: .id, value: .value}) | from_entries' "$jsonl_file" > "$out_file"
+  else
+    echo "{}" > "$out_file"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
+build_base_database_backup_size_map() {
+  local region="$1"
+  local db_json_file="$2"
+  local out_file="$3"
+  local tmp_dir
+  local jsonl_file
+  local db_id
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/oci-review-db-backups.XXXXXX")"
+  jsonl_file="${tmp_dir}/db_backups.jsonl"
+  : > "$jsonl_file"
+
+  while IFS= read -r db_id; do
+    [[ -n "$db_id" ]] || continue
+    local backup_file
+    backup_file="${tmp_dir}/${db_id}.json"
+    oci_cli db backup list --database-id "$db_id" --region "$region" --all --output json > "$backup_file"
+
+    jq -cn --arg id "$db_id" --slurpfile backups "$backup_file" '
+      ($backups[0].data // []) as $b
+      | {
+          id: $id,
+          value: {
+            databaseBackupsTotalSizeInGbs: (
+              $b
+              | map(."database-size-in-gbs" // .databaseSizeInGBs // empty)
+              | if length == 0 then 0 else add end
+            )
+          }
+        }
+    ' >> "$jsonl_file"
+  done < <(jq -r '.data[]? | (.id // "") | select(length > 0)' "$db_json_file")
+
+  if [[ -s "$jsonl_file" ]]; then
+    jq -s 'map(select(.id != "")) | map({key: .id, value: .value}) | from_entries' "$jsonl_file" > "$out_file"
+  else
+    echo "{}" > "$out_file"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
 build_base_database_compartment_region() {
   local region="$1"
   local cid="$2"
   local out_file="$3"
   local cpath
   local cpath_file
+  local db_json_file
+  local db_system_ids_file
+  local db_system_map_file
+  local db_backup_map_file
   cpath="$(get_compartment_path "$cid")"
   cpath_file="$(write_compartment_path_file "$cpath")"
-  oci_cli db database list --compartment-id "$cid" --region "$region" --output json \
-    | jq -c --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" '
+  db_json_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-base-db.XXXXXX")"
+  db_system_ids_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-base-db-systems.XXXXXX")"
+  db_system_map_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-base-db-system-map.XXXXXX")"
+  db_backup_map_file="$(mktemp "${TMPDIR:-/tmp}/oci-review-base-db-backup-map.XXXXXX")"
+
+  oci_cli db database list --compartment-id "$cid" --region "$region" --output json > "$db_json_file"
+  jq -r '.data[]? | (."db-system-id" // .dbSystemId // "") | select(length > 0)' "$db_json_file" | sort -u > "$db_system_ids_file"
+  build_base_database_db_system_map "$region" "$cid" "$db_system_ids_file" "$db_system_map_file"
+  build_base_database_backup_size_map "$region" "$db_json_file" "$db_backup_map_file"
+
+  jq -c --arg region "$region" --arg cid "$cid" --rawfile cpath "$cpath_file" --slurpfile dbsystems "$db_system_map_file" --slurpfile backups "$db_backup_map_file" '
+        ($dbsystems[0] // {}) as $dbs
+        | ($backups[0] // {}) as $backupSizes
+        |
         .data[]?
         | (."db-backup-config" // .dbBackupConfig // {}) as $b
+        | ($dbs[(."db-system-id" // .dbSystemId // "")] // {}) as $s
+        | ($backupSizes[(.id // "")] // {}) as $backup
         | {
           compartmentId: $cid,
           compartmentPath: $cpath,
@@ -1358,6 +1509,31 @@ build_base_database_compartment_region() {
           dbWorkload: (."db-workload" // .dbWorkload // ""),
           dbVersion: (."db-version" // .dbVersion // ""),
           dbSystemId: (."db-system-id" // .dbSystemId // ""),
+          dbSystemDisplayName: ($s.dbSystemDisplayName // ""),
+          dbSystemShape: ($s.dbSystemShape // ""),
+          dbSystemAvailabilityDomain: ($s.dbSystemAvailabilityDomain // ""),
+          dbSystemHostname: ($s.dbSystemHostname // ""),
+          dbSystemDomain: ($s.dbSystemDomain // ""),
+          dbSystemCpuCoreCount: ($s.dbSystemCpuCoreCount // ""),
+          dbSystemComputeModel: ($s.dbSystemComputeModel // ""),
+          dbSystemComputeCount: ($s.dbSystemComputeCount // ""),
+          dbSystemMemorySizeInGbs: ($s.dbSystemMemorySizeInGbs // ""),
+          dbSystemNodeCount: ($s.dbSystemNodeCount // ""),
+          dbSystemStorageVolumePerformanceMode: ($s.dbSystemStorageVolumePerformanceMode // ""),
+          dbSystemDataStoragePercentage: ($s.dbSystemDataStoragePercentage // ""),
+          dbSystemDataStorageSizeInGbs: ($s.dbSystemDataStorageSizeInGbs // ""),
+          dbSystemRecoStorageSizeInGb: ($s.dbSystemRecoStorageSizeInGb // ""),
+          dbSystemSoftwareStorageSizeInGbTotal: ($s.dbSystemSoftwareStorageSizeInGbTotal // ""),
+          dbSystemTotalStorageSizeInGbs: ($s.dbSystemTotalStorageSizeInGbs // ""),
+          dbSystemLicenseModel: ($s.dbSystemLicenseModel // ""),
+          dbSystemDiskRedundancy: ($s.dbSystemDiskRedundancy // ""),
+          dbSystemSparseDiskgroup: (if ($s | has("dbSystemSparseDiskgroup")) then $s.dbSystemSparseDiskgroup else "" end),
+          dbSystemKmsKeyId: ($s.dbSystemKmsKeyId // ""),
+          dbSystemLifecycleState: ($s.dbSystemLifecycleState // ""),
+          dbSystemLifecycleDetails: ($s.dbSystemLifecycleDetails // ""),
+          dbSystemFreeformTagCount: ($s.dbSystemFreeformTagCount // ""),
+          dbSystemDefinedTagNamespaceCount: ($s.dbSystemDefinedTagNamespaceCount // ""),
+          dbSystemTimeCreated: ($s.dbSystemTimeCreated // ""),
           dbHomeId: (."db-home-id" // .dbHomeId // ""),
           vmClusterId: (."vm-cluster-id" // .vmClusterId // ""),
           cdbName: (."cdb-name" // .cdbName // ""),
@@ -1381,13 +1557,14 @@ build_base_database_compartment_region() {
           lastBackupTimestamp: (."last-backup-timestamp" // .lastBackupTimestamp // ""),
           lastFailedBackupTimestamp: (."last-failed-backup-timestamp" // .lastFailedBackupTimestamp // ""),
           lastBackupDurationInSeconds: (."last-backup-duration-in-seconds" // .lastBackupDurationInSeconds // ""),
+          databaseBackupsTotalSizeInGbs: ($backup.databaseBackupsTotalSizeInGbs // 0),
           freeformTagCount: ((."freeform-tags" // .freeformTags // {}) | keys | length),
           definedTagNamespaceCount: ((."defined-tags" // .definedTags // {}) | keys | length),
           timeCreated: (."time-created" // .timeCreated // ""),
           id: (.id // "")
         }
-      ' > "$out_file"
-  rm -f "$cpath_file"
+      ' "$db_json_file" > "$out_file"
+  rm -f "$cpath_file" "$db_json_file" "$db_system_ids_file" "$db_system_map_file" "$db_backup_map_file"
 }
 
 prepare_base_database_region() {
@@ -1425,8 +1602,8 @@ merge_base_database_region() {
   concat_compartment_parts "${out_dir}/compartments" "*.jsonl" "$jsonl_file"
   jq -s 'sort_by(.region, .compartmentPath, .dbName)' "$jsonl_file" > "$json_file"
   jq -r '
-    ["compartment-id","compartment-path","region","db-name","db-unique-name","db-workload","db-version","db-system-id","db-home-id","vm-cluster-id","cdb-name","pdb-name","lifecycle-state","lifecycle-details","character-set","ncharacter-set","is-cdb","kms-key-id","kms-key-version-id","key-store-id","key-store-wallet-name","vault-id","database-software-image-id","sid-prefix","auto-backup-enabled","backup-recovery-window-in-days","backup-destination-type","auto-full-backup-day","last-backup-timestamp","last-failed-backup-timestamp","last-backup-duration-in-seconds","freeform-tag-count","defined-tag-namespace-count","time-created","id"],
-    (.[] | [.compartmentId, .compartmentPath, .region, .dbName, .dbUniqueName, .dbWorkload, .dbVersion, .dbSystemId, .dbHomeId, .vmClusterId, .cdbName, .pdbName, .lifecycleState, .lifecycleDetails, .characterSet, .ncharacterSet, .isCdb, .kmsKeyId, .kmsKeyVersionId, .keyStoreId, .keyStoreWalletName, .vaultId, .databaseSoftwareImageId, .sidPrefix, .autoBackupEnabled, .backupRecoveryWindowInDays, .backupDestinationType, .autoFullBackupDay, .lastBackupTimestamp, .lastFailedBackupTimestamp, .lastBackupDurationInSeconds, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .id]) | @csv
+    ["compartment-id","compartment-path","region","db-name","db-unique-name","db-workload","db-version","db-system-id","db-system-display-name","db-system-shape","db-system-availability-domain","db-system-hostname","db-system-domain","db-system-cpu-core-count","db-system-compute-model","db-system-compute-count","db-system-memory-size-in-gbs","db-system-node-count","db-system-storage-volume-performance-mode","db-system-data-storage-percentage","db-system-data-storage-size-in-gbs","db-system-reco-storage-size-in-gb","db-system-software-storage-size-in-gb-total","db-system-total-storage-size-in-gbs","db-system-license-model","db-system-disk-redundancy","db-system-sparse-diskgroup","db-system-kms-key-id","db-system-lifecycle-state","db-system-lifecycle-details","db-system-freeform-tag-count","db-system-defined-tag-namespace-count","db-system-time-created","db-home-id","vm-cluster-id","cdb-name","pdb-name","lifecycle-state","lifecycle-details","character-set","ncharacter-set","is-cdb","kms-key-id","kms-key-version-id","key-store-id","key-store-wallet-name","vault-id","database-software-image-id","sid-prefix","auto-backup-enabled","backup-recovery-window-in-days","backup-destination-type","auto-full-backup-day","last-backup-timestamp","last-failed-backup-timestamp","last-backup-duration-in-seconds","database-backups-total-size-in-gbs","freeform-tag-count","defined-tag-namespace-count","time-created","id"],
+    (.[] | [.compartmentId, .compartmentPath, .region, .dbName, .dbUniqueName, .dbWorkload, .dbVersion, .dbSystemId, .dbSystemDisplayName, .dbSystemShape, .dbSystemAvailabilityDomain, .dbSystemHostname, .dbSystemDomain, .dbSystemCpuCoreCount, .dbSystemComputeModel, .dbSystemComputeCount, .dbSystemMemorySizeInGbs, .dbSystemNodeCount, .dbSystemStorageVolumePerformanceMode, .dbSystemDataStoragePercentage, .dbSystemDataStorageSizeInGbs, .dbSystemRecoStorageSizeInGb, .dbSystemSoftwareStorageSizeInGbTotal, .dbSystemTotalStorageSizeInGbs, .dbSystemLicenseModel, .dbSystemDiskRedundancy, .dbSystemSparseDiskgroup, .dbSystemKmsKeyId, .dbSystemLifecycleState, .dbSystemLifecycleDetails, .dbSystemFreeformTagCount, .dbSystemDefinedTagNamespaceCount, .dbSystemTimeCreated, .dbHomeId, .vmClusterId, .cdbName, .pdbName, .lifecycleState, .lifecycleDetails, .characterSet, .ncharacterSet, .isCdb, .kmsKeyId, .kmsKeyVersionId, .keyStoreId, .keyStoreWalletName, .vaultId, .databaseSoftwareImageId, .sidPrefix, .autoBackupEnabled, .backupRecoveryWindowInDays, .backupDestinationType, .autoFullBackupDay, .lastBackupTimestamp, .lastFailedBackupTimestamp, .lastBackupDurationInSeconds, .databaseBackupsTotalSizeInGbs, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .id]) | @csv
   ' "$json_file" > "$csv_file"
   verbose "wrote region artifact dir '${out_dir}'"
   local total
@@ -1473,8 +1650,8 @@ merge_base_database_regions() {
   verbose "wrote 'report/base-database/base_database_target_compartments.csv'"
 
   jq -r '
-    ["compartment-id","compartment-path","region","db-name","db-unique-name","db-workload","db-version","db-system-id","db-home-id","vm-cluster-id","cdb-name","pdb-name","lifecycle-state","lifecycle-details","character-set","ncharacter-set","is-cdb","kms-key-id","kms-key-version-id","key-store-id","key-store-wallet-name","vault-id","database-software-image-id","sid-prefix","auto-backup-enabled","backup-recovery-window-in-days","backup-destination-type","auto-full-backup-day","last-backup-timestamp","last-failed-backup-timestamp","last-backup-duration-in-seconds","freeform-tag-count","defined-tag-namespace-count","time-created","id"],
-    (.[] | [.compartmentId, .compartmentPath, .region, .dbName, .dbUniqueName, .dbWorkload, .dbVersion, .dbSystemId, .dbHomeId, .vmClusterId, .cdbName, .pdbName, .lifecycleState, .lifecycleDetails, .characterSet, .ncharacterSet, .isCdb, .kmsKeyId, .kmsKeyVersionId, .keyStoreId, .keyStoreWalletName, .vaultId, .databaseSoftwareImageId, .sidPrefix, .autoBackupEnabled, .backupRecoveryWindowInDays, .backupDestinationType, .autoFullBackupDay, .lastBackupTimestamp, .lastFailedBackupTimestamp, .lastBackupDurationInSeconds, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .id]) | @csv
+    ["compartment-id","compartment-path","region","db-name","db-unique-name","db-workload","db-version","db-system-id","db-system-display-name","db-system-shape","db-system-availability-domain","db-system-hostname","db-system-domain","db-system-cpu-core-count","db-system-compute-model","db-system-compute-count","db-system-memory-size-in-gbs","db-system-node-count","db-system-storage-volume-performance-mode","db-system-data-storage-percentage","db-system-data-storage-size-in-gbs","db-system-reco-storage-size-in-gb","db-system-software-storage-size-in-gb-total","db-system-total-storage-size-in-gbs","db-system-license-model","db-system-disk-redundancy","db-system-sparse-diskgroup","db-system-kms-key-id","db-system-lifecycle-state","db-system-lifecycle-details","db-system-freeform-tag-count","db-system-defined-tag-namespace-count","db-system-time-created","db-home-id","vm-cluster-id","cdb-name","pdb-name","lifecycle-state","lifecycle-details","character-set","ncharacter-set","is-cdb","kms-key-id","kms-key-version-id","key-store-id","key-store-wallet-name","vault-id","database-software-image-id","sid-prefix","auto-backup-enabled","backup-recovery-window-in-days","backup-destination-type","auto-full-backup-day","last-backup-timestamp","last-failed-backup-timestamp","last-backup-duration-in-seconds","database-backups-total-size-in-gbs","freeform-tag-count","defined-tag-namespace-count","time-created","id"],
+    (.[] | [.compartmentId, .compartmentPath, .region, .dbName, .dbUniqueName, .dbWorkload, .dbVersion, .dbSystemId, .dbSystemDisplayName, .dbSystemShape, .dbSystemAvailabilityDomain, .dbSystemHostname, .dbSystemDomain, .dbSystemCpuCoreCount, .dbSystemComputeModel, .dbSystemComputeCount, .dbSystemMemorySizeInGbs, .dbSystemNodeCount, .dbSystemStorageVolumePerformanceMode, .dbSystemDataStoragePercentage, .dbSystemDataStorageSizeInGbs, .dbSystemRecoStorageSizeInGb, .dbSystemSoftwareStorageSizeInGbTotal, .dbSystemTotalStorageSizeInGbs, .dbSystemLicenseModel, .dbSystemDiskRedundancy, .dbSystemSparseDiskgroup, .dbSystemKmsKeyId, .dbSystemLifecycleState, .dbSystemLifecycleDetails, .dbSystemFreeformTagCount, .dbSystemDefinedTagNamespaceCount, .dbSystemTimeCreated, .dbHomeId, .vmClusterId, .cdbName, .pdbName, .lifecycleState, .lifecycleDetails, .characterSet, .ncharacterSet, .isCdb, .kmsKeyId, .kmsKeyVersionId, .keyStoreId, .keyStoreWalletName, .vaultId, .databaseSoftwareImageId, .sidPrefix, .autoBackupEnabled, .backupRecoveryWindowInDays, .backupDestinationType, .autoFullBackupDay, .lastBackupTimestamp, .lastFailedBackupTimestamp, .lastBackupDurationInSeconds, .databaseBackupsTotalSizeInGbs, .freeformTagCount, .definedTagNamespaceCount, .timeCreated, .id]) | @csv
   ' report/base-database/base_databases.json > report/base-database/base_databases.csv
   verbose "wrote 'report/base-database/base_databases.csv'"
   local total
