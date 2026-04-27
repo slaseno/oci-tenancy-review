@@ -465,7 +465,7 @@ CSV header:
 - `time-created`
 - `id`
 
-Implementation detail: DB system metadata is enriched via `oci db system get`, while node metadata is gathered via `oci db node list` + `oci db node get`. This adds DB system storage context such as data, RECO, and software sizing to each database row. `db-system-total-storage-size-in-gbs` is a derived total of data + RECO + software storage. `database-backups-total-size-in-gbs` is the sum of backup `database-size-in-gbs` values returned by `oci db backup list`, so it reflects the database size recorded at backup time rather than a de-duplicated physical backup storage footprint.
+Implementation detail: DB system metadata is enriched via `oci db system get`, while node metadata is gathered via `oci db node list` + `oci db node get`. This adds DB system storage context such as data, RECO, and software sizing to each database row. `db-system-data-storage-percentage` is the configured percentage assigned to DATA storage, but Oracle documents it as not applicable for virtual machine DB systems. `db-system-total-storage-size-in-gbs` is a derived total of data + RECO + software storage. `database-backups-total-size-in-gbs` is the sum of backup `database-size-in-gbs` values returned by `oci db backup list`, so it reflects the database size recorded at backup time rather than a de-duplicated physical backup storage footprint.
 
 ### `report/limits/service_limits.csv`
 
